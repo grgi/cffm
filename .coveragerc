@@ -6,7 +6,7 @@ source = cffm
 
 [paths]
 source =
-    src/
+    lib/
     */site-packages/
 
 [report]
