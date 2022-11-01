@@ -34,7 +34,7 @@ cffm
 ====
 
 
-    ConFiguratio Fontium Multorum - Configuration of many sources
+    ConFiguratio Fontium Multorum - Configuration of Many Sources
 
 
 A longer description of your project goes here...
