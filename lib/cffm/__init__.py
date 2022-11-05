@@ -14,3 +14,7 @@ except PackageNotFoundError:  # pragma: no cover
     __version__ = "unknown"
 finally:
     del version, PackageNotFoundError
+
+
+from cffm.config import config, section, field, MISSING
+from cffm.source import *
