@@ -59,8 +59,9 @@ def field(default: Any | _MissingObject = MISSING,
 
 
 class Config:
-    __slots__ = ()
+    __slots__ = ('__frozen__',)
 
+    __defaults__: ClassVar[dict[str, Any]] = {}
     __fields__: ClassVar[dict[str, Field]]
     __sections__: "ClassVar[dict[str, Config]]"
 
@@ -70,6 +71,8 @@ class Config:
         for name, field in self.__fields__.items():
             value = kwargs.pop(name, MISSING)
             setattr(self, name, field.convert(value))
+
+        self.__frozen__ = self.__defaults__.get('frozen', True)
 
         if kwargs:
             name = next(iter(kwargs))
@@ -86,6 +89,16 @@ class Config:
     def __eq__(self, other: Any) -> bool:
         return all(getattr(self, name) == getattr(other, name, _marker)
                    for name in self.__fields__)
+
+    def __setattr__(self, name: str, value: Any):
+        if getattr(self, '__frozen__', False) and name in self.__fields__:
+            raise AttributeError("instance is read-only")
+        return super().__setattr__(name, value)
+
+    def __delattr__(self, name: str):
+        if getattr(self, '__frozen__', False) and name in self.__fields__:
+            raise AttributeError("instance is read-only")
+        return super().__delattr__(name)
 
 
 class Section(Config):
@@ -138,22 +151,27 @@ def config(cls: type, /) -> type:
 
 
 @overload
-def config(*, strict: bool = False):
+def config(*, strict: bool = False, frozen: bool = True):
     ...
 
 
-def config(maybe_cls=None, /, *, strict=False) \
+def config(maybe_cls=None, /, *, frozen: bool = True) \
         -> type[Config] | Callable[[type], type[Config]]:
+    options = dict(frozen=frozen)
     def deco(cls: type) -> type[Config]:
-        return type(cls.__name__, (Config,), _process_def(cls))
+        return type(cls.__name__, (Config,),
+                    _process_def(cls) | dict(__defaults__=options))
 
     if maybe_cls is None:
         return deco
     return deco(maybe_cls)
 
 
-def section(name: str, *, strict: bool = False) -> Callable[[type], type[Section]]:
+def section(name: str, *, frozen: bool = True) -> Callable[[type], type[Section]]:
+    options = dict(frozen=frozen)
     def deco(cls: type) -> type[Section]:
-        return type(cls.__name__, (Section,), _process_def(cls) | dict(__section_name__=name))
+        return type(cls.__name__, (Section,),
+                    _process_def(cls) | dict(__section_name__=name,
+                                             __defaults=options))
 
     return deco
