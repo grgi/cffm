@@ -1,12 +1,12 @@
 import inspect
-from collections.abc import Iterator, Callable
-from typing import overload, Any, ClassVar, Literal
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, KW_ONLY, replace
+from typing import overload, Any, ClassVar
 
-from attrs import frozen, Attribute, NOTHING, field as attrs_field, Factory
+__all__ = ('MISSING', 'field', 'config', 'Config', 'Section')
 
-from cffm.utils import iterate_to
 
-__all__ = ('config', 'section', 'field', 'Config', 'Section', 'MISSING')
+_marker = object()
 
 
 class _MissingObject:
@@ -19,75 +19,117 @@ class _MissingObject:
 MISSING = _MissingObject()
 
 
-def field(*, default: Any = NOTHING, description: str | None = None,
+@dataclass(slots=True, frozen=True)
+class Field:
+    def cast_field_type(self, value: Any) -> Any:
+        if value is MISSING:
+            return MISSING
+        return self.type(value)
+
+    def init_section(self, value: Any) -> "Config":
+        match value:
+            case self.type():
+                return value
+            case dict():
+                return self.type(**value)
+            case _MissingObject():
+                return self.type()
+            case _:
+                return value
+
+    default: Any | _MissingObject = MISSING
+    description: str | None = None
+    _: KW_ONLY = None
+    env: str | None = None
+    converter: "Callable[[Field, Any], Any] | None" = cast_field_type
+    name: str | None = None
+    type: type = None
+
+    def convert(self, value: Any) -> Any:
+        if self.converter is None:
+            return value
+        return self.converter(self, value)
+
+
+def field(default: Any | _MissingObject = MISSING,
+          description: str | None = None, *,
           env: str | None = None,
-          converter: "Callable[[Field, Any], Any] | None" = None):
-    metadata = {}
-    if description:
-        metadata.update(description=description)
-    if env:
-        metadata.update(env_varname=env)
-    return attrs_field(default=default,
-                       metadata=metadata,
-                       converter=converter)
+          converter: "Callable[[Any, Field], Any]" = Field.cast_field_type) -> Field:
+    return Field(default, description, env=env, converter=converter)
 
 
 class Config:
     __slots__ = ()
+
+    __fields__: ClassVar[dict[str, Field]]
+    __sections__: "ClassVar[dict[str, Config]]"
+
+    __frozen__: bool
+
+    def __init__(self, **kwargs):
+        for name, field in self.__fields__.items():
+            value = kwargs.pop(name, MISSING)
+            setattr(self, name, field.convert(value))
+
+        if kwargs:
+            name = next(iter(kwargs))
+            raise TypeError(
+                f"{type(self).__name__}.__init__() got "
+                f"an unexpected keyword argument '{name}'")
+
+    def __repr__(self) -> str:
+        def gen() -> str:
+            for name, field in self.__fields__.items():
+                yield f"{name}: {field.type.__name__} = {getattr(self, name, MISSING)!r}"
+        return f"{type(self).__name__}({', '.join(gen())})"
+
+    def __eq__(self, other: Any) -> bool:
+        return all(getattr(self, name) == getattr(other, name, _marker)
+                   for name in self.__fields__)
 
 
 class Section(Config):
     __slots__ = ()
 
     __section_name__: ClassVar[str]
-    __parent__: ClassVar[type[Config]]
 
 
-def _prepare_attributes(cls: type) -> Iterator[tuple[str, Any]]:
-    """This fixes 2 things:
-    * resolve annotations
-    * wrap a `Section` in a field
-    """
-    annotations = inspect.get_annotations(cls, eval_str=True)
-    for key, value in vars(cls).items():
-        if key in ('__dict__', '__weakref__', '__annotations__'):
-            continue
+def _process_def(config_def: type) -> dict[str, Any]:
+    cls_vars = {k: v for k, v in vars(config_def).items()
+                if k not in ('__annotations__', '__dict__', '__weakref__')}
+    annotations = inspect.get_annotations(config_def, eval_str=True)
+    ns = dict(__annotations__=annotations)
 
-        if isinstance(value, type) and issubclass(value, Section):
-            value.__parent__ = cls
-            annotations[value.__section_name__] = value
-            yield value.__section_name__, field(description=value.__doc__)
-        else:
-            yield key, value
-    yield '__annotations__', annotations
+    sections = {}
 
+    def gen_fields() -> Iterator[tuple[str, Field]]:
+        for name, field_type in annotations.items():
+            match cls_vars.pop(name, MISSING):
+                case _MissingObject():
+                    yield name, Field(name=name, type=field_type)
+                case Field() as f:
+                    yield name, replace(f, name=name, type=field_type)
+                case _ as v:
+                    yield name, Field(default=v, name=name, type=field_type)
 
-@iterate_to(list)
-def _process_attributes(_: type[Config], attributes: list[Attribute]) -> Iterator[Attribute]:
-    for field_ in attributes:
-        converter = field_.converter
-        metadata = field_.metadata
-        if issubclass(field_.type, Section):
-            if converter is None:
-                def converter(value: dict[str, Any] | field_.type,
-                              _field_type: type = field_.type) -> field_.type:
-                    if isinstance(value, _field_type):
-                        return value
-                    return _field_type(**value)
-            default = Factory(field_.type)
+        for name, attr in cls_vars.items():
+            if isinstance(attr, type) and issubclass(attr, Section):
+                name = attr.__section_name__
+                sections[name] = attr
+                annotations[name] = attr
+                yield name, Field(description=section.__doc__,
+                                  converter=Field.init_section,
+                                  name=name, type=attr)
+            else:
+                ns[name] = attr
 
-        else:
-            if converter is None:
-                def converter(value: Any, _field_type: type = field_.type) \
-                        -> field_.type | _MissingObject:
-                    if value is MISSING:
-                        return MISSING
-                    return _field_type(value)
-            if field_.default is not NOTHING:
-                metadata = metadata.copy() | dict(default=field_.default)
-            default = MISSING
+    fields = dict(gen_fields())
 
-        yield field_.evolve(converter=converter, default=default, metadata=metadata)
+    ns.update(__fields__=fields,
+              __sections__=sections,
+              __slots__=tuple(fields),
+              __match_args__=tuple(fields))
+    return ns
 
 
 @overload
@@ -103,32 +145,15 @@ def config(*, strict: bool = False):
 def config(maybe_cls=None, /, *, strict=False) \
         -> type[Config] | Callable[[type], type[Config]]:
     def deco(cls: type) -> type[Config]:
-        fixed_cls = type(cls.__name__, (Config,), dict(_prepare_attributes(cls)))
-        return frozen(fixed_cls, kw_only=True, field_transformer=_process_attributes)
+        return type(cls.__name__, (Config,), _process_def(cls))
 
     if maybe_cls is None:
         return deco
     return deco(maybe_cls)
 
 
-@overload
-def section(cls: type, /) -> type:
-    ...
-
-
-@overload
-def section(name: str, *, strict: bool = False):
-    ...
-
-
-def section(cls_or_name=None, *, strict=False) \
-        -> type[Section] | Callable[[type], type[Section]]:
+def section(name: str, *, strict: bool = False) -> Callable[[type], type[Section]]:
     def deco(cls: type) -> type[Section]:
-        fixed_cls = type(cls.__name__, (Section,), dict(_prepare_attributes(cls)))
-        fixed_cls.__section_name__ = cls_or_name \
-            if isinstance(cls_or_name, str) else cls.__name__
-        return frozen(fixed_cls, kw_only=True, field_transformer=_process_attributes)
+        return type(cls.__name__, (Section,), _process_def(cls) | dict(__section_name__=name))
 
-    if isinstance(cls_or_name, type):
-        return deco(cls_or_name)
     return deco

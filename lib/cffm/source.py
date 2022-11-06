@@ -12,8 +12,6 @@ from abc import ABCMeta, abstractmethod
 from collections.abc import Iterator
 from typing import Any
 
-import attrs
-
 from cffm.config import Config, Section, MISSING
 
 
@@ -51,11 +49,11 @@ class DefaultSource(Source):
 
     def load(self, config_cls: type[Config]) -> Config:
         def gen(cls: type[Config]) -> Iterator[tuple[str, Any]]:
-            for field in attrs.fields(cls):
+            for field in cls.__fields__.values():
                 if issubclass(field.type, Section):
                     value = self.load(field.type)
                 else:
-                    value = field.metadata.get('default', MISSING)
+                    value = field.default
 
                 yield field.name, value
 
@@ -106,12 +104,13 @@ class EnvironmentSource(Source):
 
     def load(self, config_cls: type[Config]) -> Config:
         def gen(cls: type[Config]) -> Iterator[tuple[str, Any]]:
-            for field in attrs.fields(cls):
+            for field in cls.__fields__.values():
                 if issubclass(field.type, Section):
                     value = self.load(field.type)
+                elif isinstance(field.env, str):
+                    value = self._environment.get(field.env, MISSING)
                 else:
-                    env_varname = field.metadata.get('env_varname', '')
-                    value = self._environment.get(env_varname, MISSING)
+                    value = MISSING
 
                 yield field.name, value
 
