@@ -81,6 +81,13 @@ class DataSource(Source):
         pass
 
 
+class CustomSource(DataSource):
+    __slots__ = ()
+
+    def __init__(self, name: str = 'custom', data: dict[str, Any] | None = None):
+        super().__init__(name, {} if data is None else data)
+
+
 class EnvironmentSource(Source):
     __slots__ = ('_environment', '_auto', '_case_sensitive',
                  '_prefix', '_separator')
