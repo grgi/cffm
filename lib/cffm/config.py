@@ -50,6 +50,7 @@ class Field:
     default: Any | _MissingObject = MISSING
     description: str | None = None
     _: KW_ONLY = None
+    ref: "str | Callable[[Field, type[Config]], Any] | None" = None
     env: str | None = None
     converter: "Callable[[Field, Any], Any] | None" = cast_field_type
     name: str | None = None
@@ -85,8 +86,10 @@ class Config:
 
     def __init__(self, **kwargs):
         for name, field in self.__fields__.items():
-            value = kwargs.pop(name, MISSING)
-            setattr(self, name, field.convert(value))
+            value = field.convert(kwargs.pop(name, MISSING))
+            if name in self.__sections__:
+                value.__parent__ = self
+            setattr(self, name, value)
 
         self.__frozen__ = self.__defaults__.get('frozen', True)
 
@@ -129,10 +132,12 @@ def unfreeze(config: Config):
 
 
 class Section(Config):
-    __slots__ = ()
+    __slots__ = ('__parent__',)
 
     __section_name__: ClassVar[str]
-    __parent__: ClassVar[type[Config]]
+    __parent_cls__: ClassVar[type[Config]]
+
+    __parent__: Config
 
 
 def _section_from_config(config_cls: type[Config], name: str) -> type[Section]:
@@ -218,7 +223,7 @@ def config(maybe_cls=None, /, *, frozen: bool = True, strict: bool = False,
                           _process_def(cls, *add_sections) |
                           dict(__strict__=strict, __defaults__=options))
         for section_cls in config_cls.__sections__.values():
-            section_cls.__parent__ = config_cls
+            section_cls.__parent_cls__ = config_cls
         return config_cls
 
     if maybe_cls is None:
@@ -238,7 +243,7 @@ def section(name: str, *, frozen: bool = True,
                           _process_def(cls, *additional_sections) |
                           dict(__section_name__=name, __defaults__=options))
         for subsection_cls in section_cls.__sections__.values():
-            subsection_cls.__parent__ = section_cls
+            subsection_cls.__parent_cls__ = section_cls
         return section_cls
 
     return deco
