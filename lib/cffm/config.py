@@ -1,9 +1,12 @@
-import inspect
+import types
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, KW_ONLY, replace
-from typing import overload, Any, ClassVar
+from importlib.metadata import entry_points
+import inspect
+from typing import overload, Any, ClassVar, get_args
 
-__all__ = ('MISSING', 'field', 'config', 'Config', 'Section')
+__all__ = ('MISSING', 'field', 'config', 'section', 'Config', 'Section',
+           'sections_from_entrypoints')
 
 
 _marker = object()
@@ -24,7 +27,14 @@ class Field:
     def cast_field_type(self, value: Any) -> Any:
         if value is MISSING:
             return MISSING
-        return self.type(value)
+        match self.type:
+            case type():
+                return self.type(value)
+            case types.UnionType():
+                for t in get_args(self.type):
+                    if isinstance(value, t):
+                        return value
+                return get_args(self.type)[0](value)
 
     def init_section(self, value: Any) -> "Config":
         match value:
@@ -58,6 +68,11 @@ def field(default: Any | _MissingObject = MISSING,
     return Field(default, description, env=env, converter=converter)
 
 
+def section_field(section_cls: "type[Section]") -> Field:
+    return Field(description=section_cls.__doc__, converter=Field.init_section,
+                 name=section_cls.__section_name__, type=section_cls)
+
+
 class Config:
     __slots__ = ('__frozen__',)
 
@@ -83,7 +98,8 @@ class Config:
     def __repr__(self) -> str:
         def gen() -> str:
             for name, field in self.__fields__.items():
-                yield f"{name}: {field.type.__name__} = {getattr(self, name, MISSING)!r}"
+                field_type = getattr(field.type, '__name__', str(field.type))
+                yield f"{name}: {field_type} = {getattr(self, name, MISSING)!r}"
         return f"{type(self).__name__}({', '.join(gen())})"
 
     def __eq__(self, other: Any) -> bool:
@@ -107,16 +123,28 @@ class Section(Config):
     __section_name__: ClassVar[str]
 
 
-def _process_def(config_def: type) -> dict[str, Any]:
-    cls_vars = {k: v for k, v in vars(config_def).items()
-                if k not in ('__annotations__', '__dict__', '__weakref__')}
-    annotations = inspect.get_annotations(config_def, eval_str=True)
-    ns = dict(__annotations__=annotations)
+def _section_from_config(config_cls: type[Config], name: str) -> type[Section]:
+    ns = {k: v for k, v in vars(config_cls).items()
+          if k not in ('__dict__', '__weakref__')
+          and not isinstance(v, types.MemberDescriptorType)}
+    return type(config_cls.__name__, (Section,), ns | dict(__section_name__=name))
 
-    sections = {}
+
+def _process_def(config_def: type, *additional_sections: type[Section]) \
+        -> dict[str, Any]:
+    cls_vars = {k: v for k, v in vars(config_def).items()
+                if k not in ('__annotations__', '__dict__', '__weakref__')
+                and not isinstance(v, types.MemberDescriptorType)}
+    annotations = inspect.get_annotations(config_def, eval_str=True)
+    ns = {}
+
+    fields = getattr(config_def, '__fields__', {}).copy()
+    sections = getattr(config_def, '__sections__', {}).copy()
 
     def gen_fields() -> Iterator[tuple[str, Field]]:
         for name, field_type in annotations.items():
+            if name in fields:
+                continue
             match cls_vars.pop(name, MISSING):
                 case _MissingObject():
                     yield name, Field(name=name, type=field_type)
@@ -126,22 +154,32 @@ def _process_def(config_def: type) -> dict[str, Any]:
                     yield name, Field(default=v, name=name, type=field_type)
 
         for name, attr in cls_vars.items():
-            if isinstance(attr, type) and issubclass(attr, Section):
+            if name not in sections and isinstance(attr, type) \
+                    and issubclass(attr, Section):
                 name = attr.__section_name__
                 sections[name] = attr
                 annotations[name] = attr
-                yield name, Field(description=section.__doc__,
-                                  converter=Field.init_section,
-                                  name=name, type=attr)
+                yield name, section_field(attr)
             else:
                 ns[name] = attr
 
-    fields = dict(gen_fields())
+        for section_cls in additional_sections:
+            name = section_cls.__section_name__
+            if name in sections:
+                raise TypeError(f"Duplicate section: {name}")
+            sections[name] = section_cls
+            annotations[name] = section_cls
+            yield name, section_field(section_cls)
 
-    ns.update(__fields__=fields,
-              __sections__=sections,
-              __slots__=tuple(fields),
-              __match_args__=tuple(fields))
+    fields |= dict(gen_fields())
+
+    ns.update(
+        __annotations__=annotations,
+        __fields__=fields,
+        __sections__=sections,
+        __slots__=tuple(fields),
+        __match_args__=tuple(fields)
+    )
     return ns
 
 
@@ -155,23 +193,44 @@ def config(*, strict: bool = False, frozen: bool = True):
     ...
 
 
-def config(maybe_cls=None, /, *, frozen: bool = True) \
+def config(maybe_cls=None, /, *, frozen: bool = True,
+           add_sections: dict[str, type[Config]] = {}) \
         -> type[Config] | Callable[[type], type[Config]]:
     options = dict(frozen=frozen)
+    add_sections = (section_cls
+                    if name == getattr(section_cls, '__section_name__', _marker)
+                    else _section_from_config(section_cls, name=name)
+                    for name, section_cls in add_sections.items())
     def deco(cls: type) -> type[Config]:
         return type(cls.__name__, (Config,),
-                    _process_def(cls) | dict(__defaults__=options))
+                    _process_def(cls, *add_sections) | dict(__defaults__=options))
 
     if maybe_cls is None:
         return deco
     return deco(maybe_cls)
 
 
-def section(name: str, *, frozen: bool = True) -> Callable[[type], type[Section]]:
+def section(name: str, *, frozen: bool = True,
+            add_sections: dict[str, type[Config]] = {}) -> Callable[[type], type[Section]]:
     options = dict(frozen=frozen)
+    additional_sections = tuple(
+        section_cls if name == getattr(section_cls, '__section_name__', _marker)
+        else _section_from_config(section_cls, name=name)
+        for name, section_cls in add_sections.items())
     def deco(cls: type) -> type[Section]:
         return type(cls.__name__, (Section,),
-                    _process_def(cls) | dict(__section_name__=name,
-                                             __defaults=options))
+                    _process_def(cls, *additional_sections) |
+                    dict(__section_name__=name, __defaults__=options))
 
     return deco
+
+
+def sections_from_entrypoints(name: str) -> dict[str, type[Section]]:
+    cfg_mapping = {tuple(ep.name.split('.')): ep.load() for ep in entry_points(group=name)}
+    for path, cfg_def in sorted(cfg_mapping.items(),
+                                key=lambda item: len(item[0]), reverse=True):
+        depth = len(path)
+        sections = {p[-1]: cfg_mapping.pop(p) for p in tuple(cfg_mapping)
+                    if len(p) == depth+1 and p[:depth] == path}
+        cfg_mapping[path] = section(path[-1], add_sections=sections)(cfg_def)
+    return {name[0]: config_cls for name, config_cls in cfg_mapping.items()}

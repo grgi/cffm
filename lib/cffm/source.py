@@ -50,7 +50,7 @@ class DefaultSource(Source):
     def load(self, config_cls: type[Config]) -> Config:
         def gen(cls: type[Config]) -> Iterator[tuple[str, Any]]:
             for field in cls.__fields__.values():
-                if issubclass(field.type, Section):
+                if field.name in cls.__sections__:
                     value = self.load(field.type)
                 else:
                     value = field.default
@@ -112,7 +112,7 @@ class EnvironmentSource(Source):
     def load(self, config_cls: type[Config]) -> Config:
         def gen(cls: type[Config]) -> Iterator[tuple[str, Any]]:
             for field in cls.__fields__.values():
-                if issubclass(field.type, Section):
+                if field.name in cls.__sections__:
                     value = self.load(field.type)
                 elif isinstance(field.env, str):
                     value = self._environment.get(field.env, MISSING)
