@@ -6,7 +6,7 @@ import inspect
 from typing import overload, Any, ClassVar, get_args
 
 __all__ = ('MISSING', 'field', 'config', 'section', 'Config', 'Section',
-           'sections_from_entrypoints')
+           'sections_from_entrypoints', 'freeze', 'unfreeze')
 
 
 _marker = object()
@@ -116,6 +116,16 @@ class Config:
         if getattr(self, '__frozen__', False) and name in self.__fields__:
             raise AttributeError("instance is read-only")
         return super().__delattr__(name)
+
+
+def freeze(config: Config, *, unfreeze: bool = False):
+    config.__frozen__ = not unfreeze
+    for name in config.__sections__:
+        freeze(getattr(config, name), unfreeze=unfreeze)
+
+
+def unfreeze(config: Config):
+    return freeze(config, unfreeze=True)
 
 
 class Section(Config):

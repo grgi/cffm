@@ -14,7 +14,7 @@ from collections.abc import Iterator, Callable
 from pathlib import Path
 from typing import Any
 
-from cffm.config import Config, MISSING
+from cffm.config import Config, MISSING, unfreeze
 
 
 class Source(metaclass=ABCMeta):
@@ -113,6 +113,11 @@ class CustomSource(DataSource):
 
     def __init__(self, name: str = 'custom', data: dict[str, Any] | None = None):
         super().__init__(name, {} if data is None else data)
+
+    def load(self, config_cls: type[Config]) -> Config:
+        config = super().load(config_cls)
+        unfreeze(config)
+        return config
 
 
 class EnvironmentSource(Source):
