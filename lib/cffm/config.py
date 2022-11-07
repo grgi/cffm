@@ -122,6 +122,7 @@ class Section(Config):
     __slots__ = ()
 
     __section_name__: ClassVar[str]
+    __parent__: ClassVar[type[Config]]
 
 
 def _section_from_config(config_cls: type[Config], name: str) -> type[Section]:
@@ -203,9 +204,12 @@ def config(maybe_cls=None, /, *, frozen: bool = True, strict: bool = False,
                     else _section_from_config(section_cls, name=name)
                     for name, section_cls in add_sections.items())
     def deco(cls: type) -> type[Config]:
-        return type(cls.__name__, (Config,),
-                    _process_def(cls, *add_sections) | dict(__strict__=strict,
-                                                            __defaults__=options))
+        config_cls = type(cls.__name__, (Config,),
+                          _process_def(cls, *add_sections) |
+                          dict(__strict__=strict, __defaults__=options))
+        for section_cls in config_cls.__sections__.values():
+            section_cls.__parent__ = config_cls
+        return config_cls
 
     if maybe_cls is None:
         return deco
@@ -220,9 +224,12 @@ def section(name: str, *, frozen: bool = True,
         else _section_from_config(section_cls, name=name)
         for name, section_cls in add_sections.items())
     def deco(cls: type) -> type[Section]:
-        return type(cls.__name__, (Section,),
-                    _process_def(cls, *additional_sections) |
-                    dict(__section_name__=name, __defaults__=options))
+        section_cls = type(cls.__name__, (Section,),
+                          _process_def(cls, *additional_sections) |
+                          dict(__section_name__=name, __defaults__=options))
+        for subsection_cls in section_cls.__sections__.values():
+            subsection_cls.__parent__ = section_cls
+        return section_cls
 
     return deco
 
