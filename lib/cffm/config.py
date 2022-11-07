@@ -79,7 +79,7 @@ class Config:
     __defaults__: ClassVar[dict[str, Any]] = {}
     __fields__: ClassVar[dict[str, Field]]
     __sections__: "ClassVar[dict[str, Config]]"
-    __strict__: ClassVar[bool]
+    __strict__: ClassVar[bool] = False
 
     __frozen__: bool
 
@@ -90,7 +90,7 @@ class Config:
 
         self.__frozen__ = self.__defaults__.get('frozen', True)
 
-        if not self.__strict__ and kwargs:
+        if self.__strict__ and kwargs:
             name = next(iter(kwargs))
             raise TypeError(
                 f"{type(self).__name__}.__init__() got "
