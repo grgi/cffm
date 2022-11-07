@@ -26,7 +26,7 @@ class MultiSourceConfig:
     def __build_merged__(self) -> Config:
         def gen(config_cls: type[Config], configs: list[Config]):
             for name, field in config_cls.__fields__.items():
-                if issubclass(field.type, Section):
+                if isinstance(field.type, type) and issubclass(field.type, Section):
                     value = field.type(**dict(gen(
                         field.type, [getattr(cfg, name) for cfg in configs])))
                 else:
