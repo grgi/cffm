@@ -7,12 +7,14 @@ Config Sources
   - environment
   - custom (set)
 """
+import io
 import os
 from abc import ABCMeta, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Iterator, Callable
+from pathlib import Path
 from typing import Any
 
-from cffm.config import Config, Section, MISSING
+from cffm.config import Config, MISSING
 
 
 class Source(metaclass=ABCMeta):
@@ -76,6 +78,31 @@ class DataSource(Source):
 
     def load(self, config_cls: type[Config]) -> Config:
         return config_cls(**self._data)
+
+    def validate(self, config_cls: type[Config], strict: bool = False) -> bool:
+        pass
+
+
+class ConfigFileSource(Source):
+    __slots__ = ('path', 'loader')
+
+    path: Path
+    loader: Callable[[io.BufferedReader], dict[str, Any]]
+
+    def __init__(self, path: Path | str,
+                 loader: Callable[[io.BufferedReader], dict[str, Any]],
+                 name: str | None = None):
+        if isinstance(path, str):
+            path = Path(path)
+        self.loader = loader
+        if name is None:
+            name = path.name
+        self.path = path
+        super().__init__(name)
+
+    def load(self, config_cls: type[Config]) -> Config:
+        with self.path.open('rb') as fp:
+            return config_cls(**self.loader(fp))
 
     def validate(self, config_cls: type[Config], strict: bool = False) -> bool:
         pass

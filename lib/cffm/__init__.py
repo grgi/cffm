@@ -11,4 +11,5 @@ finally:
 
 
 from cffm.config import config, section, field, MISSING, sections_from_entrypoints
+from cffm.multi import MultiSourceConfig
 from cffm.source import *
