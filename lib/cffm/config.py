@@ -79,6 +79,7 @@ class Config:
     __defaults__: ClassVar[dict[str, Any]] = {}
     __fields__: ClassVar[dict[str, Field]]
     __sections__: "ClassVar[dict[str, Config]]"
+    __strict__: ClassVar[bool]
 
     __frozen__: bool
 
@@ -89,7 +90,7 @@ class Config:
 
         self.__frozen__ = self.__defaults__.get('frozen', True)
 
-        if kwargs:
+        if not self.__strict__ and kwargs:
             name = next(iter(kwargs))
             raise TypeError(
                 f"{type(self).__name__}.__init__() got "
@@ -189,11 +190,11 @@ def config(cls: type, /) -> type:
 
 
 @overload
-def config(*, strict: bool = False, frozen: bool = True):
+def config(*, frozen: bool = True, strict: bool = False):
     ...
 
 
-def config(maybe_cls=None, /, *, frozen: bool = True,
+def config(maybe_cls=None, /, *, frozen: bool = True, strict: bool = False,
            add_sections: dict[str, type[Config]] = {}) \
         -> type[Config] | Callable[[type], type[Config]]:
     options = dict(frozen=frozen)
@@ -203,7 +204,8 @@ def config(maybe_cls=None, /, *, frozen: bool = True,
                     for name, section_cls in add_sections.items())
     def deco(cls: type) -> type[Config]:
         return type(cls.__name__, (Config,),
-                    _process_def(cls, *add_sections) | dict(__defaults__=options))
+                    _process_def(cls, *add_sections) | dict(__strict__=strict,
+                                                            __defaults__=options))
 
     if maybe_cls is None:
         return deco
