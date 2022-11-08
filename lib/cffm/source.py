@@ -14,7 +14,8 @@ from collections.abc import Iterator, Callable
 from pathlib import Path
 from typing import Any
 
-from cffm.config import Config, MISSING, unfreeze
+from cffm.config import Config, unfreeze
+from cffm.field import MISSING
 
 
 class Source(metaclass=ABCMeta):

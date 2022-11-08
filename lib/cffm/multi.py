@@ -1,6 +1,7 @@
 from typing import Any
 
-from cffm.config import Config, Section, MISSING
+from cffm.config import Config, Section
+from cffm.field import MISSING
 from cffm.source import Source, CustomSource
 
 
@@ -39,6 +40,30 @@ class MultiSourceConfig:
 
         return self.__config_cls__(**dict(
             gen(self.__config_cls__,
+                [self.__configs__[src.name] for src in reversed(self.__sources__)])))
+
+    def __build_custom__(self) -> Config:
+        def gen(config_cls: type[Config], custom: Config, configs: list[Config]):
+            for name, field in config_cls.__fields__.items():
+                if isinstance(field.type, type) and issubclass(field.type, Section):
+                    custom_value = field.type(**dict(gen(
+                        field.type, getattr(custom, name),
+                        [getattr(cfg, name) for cfg in configs])))
+                else:
+                    for cfg in configs:
+                        if (value := getattr(cfg, name, MISSING)) is not MISSING:
+                            break
+                    else:
+                        value = MISSING
+
+                    custom_value = getattr(custom, name, MISSING)
+                    if custom_value == value:
+                        custom_value = MISSING
+
+                yield name, custom_value
+
+        return self.__config_cls__(**dict(
+            gen(self.__config_cls__, self.__merged_config__,
                 [self.__configs__[src.name] for src in reversed(self.__sources__)])))
 
     def __getattr__(self, key: str) -> Any:

@@ -1,0 +1,193 @@
+import types
+from abc import ABCMeta, abstractmethod
+from typing import Any, get_args, Callable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from cffm.config import Config, Section
+
+
+class _MissingObject:
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return '<MISSING>'
+
+
+MISSING = _MissingObject()
+
+
+#@dataclass(frozen=True, slots=True)
+class Field(metaclass=ABCMeta):
+    __slots__ = ('name', 'config_cls', 'description', 'type')
+
+    name: str | None
+    config_cls: "type[Config] | None"
+    description: str | None
+    type: type | _MissingObject
+
+    def __init__(self, type: type | _MissingObject = MISSING,
+                 description: str | None = None,
+                 name: str | None = None,
+                 config_cls: "type[Config] | None" = None) -> None:
+        self.type = type
+        self.description = description
+        self.name = name
+        self.config_cls = config_cls
+
+    def __set_name__(self, owner: "type[Config]", name: str) -> None:
+        self.name = name
+        self.config_cls = owner
+
+    def __repr__(self) -> str:
+        field_type = getattr(self.type, '__name__', str(self.type))
+        if self.config_cls is None:
+            return f"<Unbound Field: {field_type}>"
+        return f"<Field {self.config_cls.__name__}.{self.name}: {field_type}>"
+
+    def update(self, **kwargs) -> "Field":
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+        return self
+
+    @abstractmethod
+    def create_default(self) -> Any:
+        ...
+
+    @abstractmethod
+    def convert(self, value: Any) -> Any:
+        ...
+
+    def __get__(self, instance: "Config | None", owner: "type[Config]") \
+            -> "SectionField | Any":
+        if instance is None:
+            return self
+
+        data = vars(instance)
+
+        try:
+            value = data[self.name]
+        except KeyError:
+            data[self.name] = value = self.create_default()
+
+        return value
+
+    def __set__(self, instance: "Config", value: Any) -> None:
+        data = vars(instance)
+
+        # Allow initialisation but no further modification if instance is frozen
+        if self.name in data and instance.__frozen__:
+            raise TypeError(
+                f"{self.config_cls.__name__} is frozen: cannot replace {self.name}"
+            )
+
+        data[self.name] = self.convert(value)
+
+    def __delete__(self, instance: "Config") -> None:
+        if instance.__frozen__:
+            raise TypeError(
+                f"{self.config_cls.__name__} is frozen: cannot delete {self.name}"
+            )
+
+        try:
+            del vars(instance)[self.name]
+        except KeyError:
+            raise AttributeError(self.name) from None
+
+
+class DataField(Field):
+    __slots__ = ('default', 'ref', 'env', 'converter')
+
+    default: Any
+    ref: "str | Callable[[Field, type[Config]], Any] | None"
+    env: str | None
+    converter: "Callable[[Field, Any], Any] | None"
+
+    def __init__(self, default: Any | _MissingObject = MISSING,
+                 type: type | _MissingObject = MISSING,
+                 description: str | None = None, *,
+                 ref: "str | Callable[[Field, type[Config]], Any] | None" = None,
+                 env: str | None = None,
+                 converter: "Callable[[Field, Any], Any] | None" = None,
+                 name: str | None = None,
+                 config_cls: "type[Config] | None" = None
+                 ) -> None:
+        super().__init__(type=type, description=description,
+                         name=name, config_cls=config_cls)
+        self.default = default
+        self.ref = ref
+        self.env = env
+        self.converter = converter
+
+    def create_default(self) -> Any:
+        return self.default
+
+    def convert(self, value: Any) -> Any:
+        if value is MISSING:
+            return MISSING
+        match self.type:
+            case type():
+                return self.type(value)
+            case types.UnionType():
+                for t in get_args(self.type):
+                    if isinstance(value, t):
+                        return value
+                return get_args(self.type)[0](value)
+
+
+class SectionField(Field):
+    __slots__ = ()
+
+    def __init__(self, section_cls: "type[Section]",
+                 description: str | None = None, *,
+                 name: str | None = None,
+                 config_cls: "type[Config] | None" = None) -> None:
+        super().__init__(
+            type=section_cls,
+            description=section_cls.__doc__ if description is None else description,
+            name=name, config_cls=config_cls
+        )
+
+    def __repr__(self) -> str:
+        if self.config_cls is None:
+            return f"<Unbound Section: {self.type.__name__}>"
+        return f"<Section {self.config_cls.__name__}.{self.name}: {self.type.__name__}>"
+
+    def create_default(self) -> Any:
+        return self.type()
+
+    def convert(self, value: Any) -> Any:
+        pass
+
+    def __set__(self, instance: "Config", value: Any) -> None:
+        data = vars(instance)
+
+        # Allow initialisation but no further modification
+        if self.name in data:
+            raise TypeError(
+                f"Section {self.config_cls.__name__}.{self.name} cannot be replaced"
+            )
+
+        if value is MISSING:
+            value = self.type()
+        elif isinstance(value, dict):
+            value = self.type(**value)
+        elif not isinstance(value, self.type):
+            raise TypeError(f"Cannot set S")
+
+        value.__parent__ = instance
+        data[self.name] = value
+
+    def __delete__(self, instance: "Config") -> None:
+        raise TypeError(
+            f"Section {self.config_cls.__name__}.{self.name} cannot be deleted"
+        )
+
+    def __getattr__(self, name: str) -> Field:
+        return getattr(self.type, name)
+
+
+def field(default: Any | _MissingObject = MISSING,
+          description: str | None = None, *,
+          env: str | None = None,
+          converter: "Callable[[Any, Field], Any]" = None) -> Field:
+    return DataField(default, description=description, env=env, converter=converter)
