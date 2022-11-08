@@ -14,8 +14,8 @@ from collections.abc import Iterator, Callable
 from pathlib import Path
 from typing import Any
 
-from cffm.config import Config, unfreeze
-from cffm.field import MISSING
+from cffm.config import Config, unfreeze, Section, unfrozen
+from cffm.field import MISSING, _MissingObject
 
 
 class Source(metaclass=ABCMeta):
@@ -51,16 +51,19 @@ class DefaultSource(Source):
         super().__init__(name)
 
     def load(self, config_cls: type[Config]) -> Config:
-        def gen(cls: type[Config]) -> Iterator[tuple[str, Any]]:
-            for field in cls.__fields__.values():
-                if field.name in cls.__sections__:
-                    value = self.load(field.type)
-                else:
-                    value = field.default
+        def apply_defaults(cfg: Config):
+            for name, field in cfg.__fields__.items():
+                match getattr(cfg, name, MISSING):
+                    case Section() as section:
+                        apply_defaults(section)
+                    case _MissingObject():
+                        setattr(cfg, name, field.create_default(cfg))
+            return cfg
 
-                yield field.name, value
+        with unfrozen(config_cls()) as config:
+            apply_defaults(config)
 
-        return config_cls(**dict(gen(config_cls)))
+        return config
 
     def validate(self, config_cls: type[Config], strict: bool = False) -> bool:
         """Usually Default sources validate unless strict=True
@@ -143,18 +146,20 @@ class EnvironmentSource(Source):
         self._environment = environment
 
     def load(self, config_cls: type[Config]) -> Config:
-        def gen(cls: type[Config]) -> Iterator[tuple[str, Any]]:
-            for field in cls.__fields__.values():
-                if field.name in cls.__sections__:
-                    value = self.load(field.type)
-                elif isinstance(field.env, str):
-                    value = self._environment.get(field.env, MISSING)
-                else:
-                    value = MISSING
+        def apply_envvars(cfg: Config):
+            for name, field in cfg.__fields__.items():
+                match getattr(cfg, name, MISSING):
+                    case Section() as section:
+                        apply_envvars(section)
+                    case _MissingObject():
+                        if isinstance(field.env, str):
+                            setattr(cfg, name,
+                                    self._environment.get(field.env, MISSING))
 
-                yield field.name, value
+        with unfrozen(config_cls()) as config:
+            apply_envvars(config)
 
-        return config_cls(**dict(gen(config_cls)))
+        return config
 
     def validate(self, config_cls: type[Config], strict: bool = False):
         pass
