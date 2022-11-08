@@ -80,16 +80,22 @@ class Field(metaclass=ABCMeta):
 class DataField(Field):
     default: Any = MISSING
     _: KW_ONLY = KW_ONLY
-    ref: "str | Callable[[Field, type[Config]], Any] | None" = None
+    ref: "Callable[[Field, Config]], Any] | None" = None
     env: str | None = None
     converter: "Callable[[Field, Any], Any] | None" = None
 
-    def create_default(self, _) -> Any:
+    def create_default(self, instance: "Config") -> Any:
+        if self.default is MISSING and self.ref is not None:
+            return self.ref(self, instance)
         return self.default
 
     def convert(self, value: Any) -> Any:
         if value is MISSING:
             return MISSING
+
+        if self.converter is not None:
+            return self.converter(self, value)
+
         match self.type:
             case type():
                 return self.type(value)
