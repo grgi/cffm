@@ -1,7 +1,7 @@
 from typing import Any
 
-from cffm.config import Config, Section
-from cffm.field import MISSING
+from cffm.config import Config, Section, unfrozen
+from cffm.field import MISSING, _MissingObject
 from cffm.source import Source, CustomSource
 
 
@@ -24,46 +24,43 @@ class MultiSourceConfig:
         return f"[{', '.join(src.name for src in self.__sources__)}] -> {self.__merged_config__}"
 
     def __build_merged__(self) -> Config:
-        def gen(config_cls: type[Config], configs: list[Config]):
-            for name, field in config_cls.__fields__.items():
-                if isinstance(field.type, type) and issubclass(field.type, Section):
-                    value = field.type(**dict(gen(
-                        field.type, [getattr(cfg, name) for cfg in configs])))
-                else:
-                    for cfg in configs:
-                        if (value := getattr(cfg, name, MISSING)) is not MISSING:
-                            break
-                    else:
-                        value = MISSING
-                yield name, value
+        def apply(cfg: Config, configs: list[Config]):
+            for name, field in cfg.__fields__.items():
+                match getattr(cfg, name, MISSING):
+                    case Section() as section:
+                        apply(section, [getattr(c, name, MISSING) for c in configs])
+                    case _MissingObject():
+                        for c in configs:
+                            if (value := getattr(c, name, MISSING)) is not MISSING:
+                                setattr(cfg, name, value)
 
-        return self.__config_cls__(**dict(
-            gen(self.__config_cls__,
-                [self.__configs__[src.name] for src in reversed(self.__sources__)])))
+        with unfrozen(self.__config_cls__()) as config:
+            apply(config, [self.__configs__[src.name] for src in reversed(self.__sources__)])
+
+        return config
 
     def __build_custom__(self) -> Config:
-        def gen(config_cls: type[Config], custom: Config, configs: list[Config]):
-            for name, field in config_cls.__fields__.items():
-                if isinstance(field.type, type) and issubclass(field.type, Section):
-                    custom_value = field.type(**dict(gen(
-                        field.type, getattr(custom, name),
-                        [getattr(cfg, name) for cfg in configs])))
-                else:
-                    for cfg in configs:
-                        if (value := getattr(cfg, name, MISSING)) is not MISSING:
-                            break
-                    else:
-                        value = MISSING
+        def apply_diff(diff_cfg: Config, custom: Config, configs: list[Config]):
+            for name, field in diff_cfg.__fields__.items():
+                match getattr(diff_cfg, name, MISSING):
+                    case Section() as section:
+                        apply_diff(section, getattr(custom, name),
+                                   [getattr(cfg, name) for cfg in configs])
+                    case _MissingObject():
+                        for cfg in configs:
+                            if (value := getattr(cfg, name, MISSING)) is not MISSING:
+                                break
+                        else:
+                            value = MISSING
 
-                    custom_value = getattr(custom, name, MISSING)
-                    if custom_value == value:
-                        custom_value = MISSING
+                        if (custom_value := getattr(custom, name, MISSING)) != value:
+                            setattr(diff_cfg, name, custom_value)
 
-                yield name, custom_value
+        with unfrozen(self.__config_cls__()) as config:
+            apply_diff(config, self.__merged_config__,
+            [self.__configs__[src.name] for src in reversed(self.__sources__)])
 
-        return self.__config_cls__(**dict(
-            gen(self.__config_cls__, self.__merged_config__,
-                [self.__configs__[src.name] for src in reversed(self.__sources__)])))
+        return config
 
     def __getattr__(self, key: str) -> Any:
         return getattr(self.__merged_config__, key)
