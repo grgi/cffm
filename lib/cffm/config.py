@@ -1,5 +1,6 @@
 import types
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from importlib.metadata import entry_points
 import inspect
 from typing import overload, Any, ClassVar
@@ -11,6 +12,12 @@ from cffm import MISSING
 from cffm.field import _MissingObject, Field, DataField, SectionField
 
 _marker = object()
+
+
+@dataclass(slots=True)
+class ConfigOptions:
+    frozen: bool = True
+    strict: bool = False
 
 
 class ConfigDef(type):
@@ -32,23 +39,24 @@ class ConfigDef(type):
 
 
 class Config:
-    # __slots__ = ('__frozen__',)
-
-    __defaults__: ClassVar[dict[str, Any]] = {}
+    __defaults__: ClassVar[ConfigOptions] = ConfigOptions()
     __fields__: ClassVar[dict[str, Field]]
     __sections__: "ClassVar[dict[str, Config]]"
-    __strict__: ClassVar[bool] = False
 
-    __frozen__: bool
+    __options__: ConfigOptions
 
     def __init__(self, **kwargs):
+        self.__options__ = ConfigOptions(
+            frozen=False,
+            strict=self.__defaults__.strict
+        )
+
         for name, field in self.__fields__.items():
-            value = kwargs.pop(name, MISSING)
-            setattr(self, name, value)
+            setattr(self, name, kwargs.pop(name, MISSING))
 
-        self.__frozen__ = self.__defaults__.get('frozen', True)
+        self.__options__.frozen = self.__defaults__.frozen
 
-        if self.__strict__ and kwargs:
+        if self.__options__.strict and kwargs:
             name = next(iter(kwargs))
             raise TypeError(
                 f"{type(self).__name__}.__init__() got "
@@ -67,7 +75,8 @@ class Config:
                    for name in self.__fields__)
 
     def __setattr__(self, name: str, value: Any):
-        if getattr(self, '__frozen__', False) and name in self.__fields__:
+        if (options := getattr(self, '__options__', None)) is not None \
+                and options.frozen and name in self.__fields__:
             raise AttributeError("instance is read-only")
         return super().__setattr__(name, value)
 
@@ -77,7 +86,7 @@ class Config:
         return super().__delattr__(name)
 
     def __freeze__(self, inverse: bool = False) -> None:
-        self.__frozen__ = not inverse
+        self.__options__.frozen = not inverse
         for name in self.__sections__:
             getattr(self, name).__freeze__(inverse=inverse)
 
@@ -91,12 +100,15 @@ def unfreeze(cfg: Config):
 
 
 class Section(Config):
-    # __slots__ = ('__parent__',)
-
     __section_name__: ClassVar[str]
     __parent_cls__: ClassVar[type[Config]]
 
     __parent__: Config
+
+    def __init__(self, parent: Config, /, **kwargs):
+        super().__init__(**kwargs)
+        self.__parent__ = parent
+        self.__options__ = parent.__options__
 
 
 def _section_from_config(config_cls: type[Config], name: str) -> type[Section]:
@@ -173,15 +185,16 @@ def config(*, frozen: bool = True, strict: bool = False):
 def config(maybe_cls=None, /, *, frozen: bool = True, strict: bool = False,
            add_sections: dict[str, type[Config]] = {}) \
         -> type[Config] | Callable[[type], type[Config]]:
-    options = dict(frozen=frozen)
+    options = ConfigOptions(frozen=frozen, strict=strict)
     add_sections = (section_cls
                     if name == getattr(section_cls, '__section_name__', _marker)
                     else _section_from_config(section_cls, name=name)
                     for name, section_cls in add_sections.items())
+
     def deco(cls: type) -> type[Config]:
         config_cls = type(cls.__name__, (Config,),
                           _process_def(cls, *add_sections) |
-                          dict(__strict__=strict, __defaults__=options))
+                          dict(__defaults__=options))
         for section_cls in config_cls.__sections__.values():
             section_cls.__parent_cls__ = config_cls
         return config_cls
@@ -191,17 +204,17 @@ def config(maybe_cls=None, /, *, frozen: bool = True, strict: bool = False,
     return deco(maybe_cls)
 
 
-def section(name: str, *, frozen: bool = True,
+def section(name: str, *,
             add_sections: dict[str, type[Config]] = {}) -> Callable[[type], type[Section]]:
-    options = dict(frozen=frozen)
     additional_sections = tuple(
         section_cls if name == getattr(section_cls, '__section_name__', _marker)
         else _section_from_config(section_cls, name=name)
         for name, section_cls in add_sections.items())
+
     def deco(cls: type) -> type[Section]:
         section_cls = type(cls.__name__, (Section,),
                           _process_def(cls, *additional_sections) |
-                          dict(__section_name__=name, __defaults__=options))
+                          dict(__section_name__=name))
         for subsection_cls in section_cls.__sections__.values():
             subsection_cls.__parent_cls__ = section_cls
         return section_cls

@@ -64,7 +64,7 @@ class Field(metaclass=ABCMeta):
         data = vars(instance)
 
         # Allow initialisation but no further modification if instance is frozen
-        if self.name in data and instance.__frozen__:
+        if self.name in data and instance.__options__.frozen:
             raise TypeError(
                 f"{self.config_cls.__name__} is frozen: cannot replace {self.name}"
             )
@@ -72,7 +72,7 @@ class Field(metaclass=ABCMeta):
         data[self.name] = self.convert(value)
 
     def __delete__(self, instance: "Config") -> None:
-        if instance.__frozen__:
+        if instance.__options.__frozen:
             raise TypeError(
                 f"{self.config_cls.__name__} is frozen: cannot delete {self.name}"
             )
@@ -141,13 +141,12 @@ class SectionField(Field):
             )
 
         if value is MISSING:
-            value = self.type()
+            value = self.type(instance)
         elif isinstance(value, dict):
-            value = self.type(**value)
+            value = self.type(instance, **value)
         elif not isinstance(value, self.type):
             raise TypeError(f"Cannot set S")
 
-        value.__parent__ = instance
         data[self.name] = value
 
     def __delete__(self, instance: "Config") -> None:
