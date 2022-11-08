@@ -45,13 +45,20 @@ class Config:
     __sections__: "ClassVar[dict[str, Config]]"
 
     __options__: ConfigOptions
+    __field_instance_mapping__: "dict[Field, Config]"
 
     def __init__(self, **kwargs):
         self._init_options()
 
         with unfrozen(self):
+            self.__field_instance_mapping__ = {}
+
             for name, field in self.__fields__.items():
                 setattr(self, name, kwargs.pop(name, MISSING))
+                self.__field_instance_mapping__[field] = self
+                if isinstance(field, SectionField):
+                    self.__field_instance_mapping__ |= \
+                        getattr(self, name).__field_instance_mapping__
 
         if self.__options__.strict and kwargs:
             name = next(iter(kwargs))
@@ -90,6 +97,18 @@ class Config:
 
     def __freeze__(self, inverse: bool = False) -> None:
         self.__options__.frozen = not inverse
+
+    def __getitem__(self, field: Field) -> Any:
+        inst = self.__field_instance_mapping__[field]
+        return getattr(inst, field.name)
+
+    def __setitem__(self, field: Field, value: Any):
+        inst = self.__field_instance_mapping__[field]
+        setattr(inst, field.name, value)
+
+    def __delitem__(self, field: Field):
+        inst = self.__field_instance_mapping__[field]
+        setattr(inst, field.name, MISSING)
 
 
 class Section(Config):
