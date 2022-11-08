@@ -39,7 +39,7 @@ class Field(metaclass=ABCMeta):
         return replace(self, **kwargs)
 
     @abstractmethod
-    def create_default(self) -> Any:
+    def create_default(self, instance: "Config") -> Any:
         ...
 
     @abstractmethod
@@ -51,14 +51,7 @@ class Field(metaclass=ABCMeta):
         if instance is None:
             return self
 
-        data = vars(instance)
-
-        try:
-            value = data[self.name]
-        except KeyError:
-            data[self.name] = value = self.create_default()
-
-        return value
+        return vars(instance)[self.name]
 
     def __set__(self, instance: "Config", value: Any) -> None:
         data = vars(instance)
@@ -91,7 +84,7 @@ class DataField(Field):
     env: str | None = None
     converter: "Callable[[Field, Any], Any] | None" = None
 
-    def create_default(self) -> Any:
+    def create_default(self, _) -> Any:
         return self.default
 
     def convert(self, value: Any) -> Any:
@@ -125,8 +118,8 @@ class SectionField(Field):
             return f"<Unbound Section: {self.type.__name__}>"
         return f"<Section {self.config_cls.__name__}.{self.name}: {self.type.__name__}>"
 
-    def create_default(self) -> Any:
-        return self.type()
+    def create_default(self, instance: "Config") -> Any:
+        return self.type(instance)
 
     def convert(self, value: Any) -> Any:
         pass
@@ -145,7 +138,7 @@ class SectionField(Field):
         elif isinstance(value, dict):
             value = self.type(instance, **value)
         elif not isinstance(value, self.type):
-            raise TypeError(f"Cannot set S")
+            raise TypeError(f"Cannot set Section: {value} has invalid type")
 
         data[self.name] = value
 

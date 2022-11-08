@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 import types
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -46,21 +47,23 @@ class Config:
     __options__: ConfigOptions
 
     def __init__(self, **kwargs):
-        self.__options__ = ConfigOptions(
-            frozen=False,
-            strict=self.__defaults__.strict
-        )
+        self._init_options()
 
-        for name, field in self.__fields__.items():
-            setattr(self, name, kwargs.pop(name, MISSING))
-
-        self.__options__.frozen = self.__defaults__.frozen
+        with unfrozen(self):
+            for name, field in self.__fields__.items():
+                setattr(self, name, kwargs.pop(name, MISSING))
 
         if self.__options__.strict and kwargs:
             name = next(iter(kwargs))
             raise TypeError(
                 f"{type(self).__name__}.__init__() got "
                 f"an unexpected keyword argument '{name}'")
+
+    def _init_options(self):
+        self.__options__ = ConfigOptions(
+            frozen=self.__defaults__.frozen,
+            strict=self.__defaults__.strict
+        )
 
     def __repr__(self) -> str:
         def gen() -> str:
@@ -87,16 +90,6 @@ class Config:
 
     def __freeze__(self, inverse: bool = False) -> None:
         self.__options__.frozen = not inverse
-        for name in self.__sections__:
-            getattr(self, name).__freeze__(inverse=inverse)
-
-
-def freeze(cfg: Config) -> None:
-    cfg.__freeze__()
-
-
-def unfreeze(cfg: Config):
-    cfg.__freeze__(inverse=True)
 
 
 class Section(Config):
@@ -106,9 +99,31 @@ class Section(Config):
     __parent__: Config
 
     def __init__(self, parent: Config, /, **kwargs):
-        super().__init__(**kwargs)
         self.__parent__ = parent
         self.__options__ = parent.__options__
+        super().__init__(**kwargs)
+
+    def _init_options(self):
+        # Do not initialise options on Sections
+        pass
+
+
+def freeze(cfg: Config) -> None:
+    cfg.__options__.frozen = True
+
+
+def unfreeze(cfg: Config):
+    cfg.__options__.frozen = False
+
+
+@contextmanager
+def unfrozen(cfg: Config):
+    was_frozen = cfg.__options__.frozen
+    try:
+        unfreeze(cfg)
+        yield cfg
+    finally:
+        cfg.__options__.frozen = was_frozen
 
 
 def _section_from_config(config_cls: type[Config], name: str) -> type[Section]:
@@ -231,3 +246,5 @@ def sections_from_entrypoints(name: str) -> dict[str, type[Section]]:
                     if len(p) == depth+1 and p[:depth] == path}
         cfg_mapping[path] = section(path[-1], add_sections=sections)(cfg_def)
     return {name[0]: config_cls for name, config_cls in cfg_mapping.items()}
+
+
