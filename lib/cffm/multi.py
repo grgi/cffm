@@ -15,11 +15,10 @@ class MultiSourceConfig:
     def __init__(self, config_def: type[Config], /, *sources: Source,
                  mutable: bool = True):
         self.__config_cls__ = config_def
-        if mutable:
-            sources = tuple((*sources, CustomSource()))
         self.__sources__ = list(sources)
         self.__configs__ = {source.name: source.load(config_def) for source in sources}
         self.__merged_config__ = self.__build_merged__()
+        self.__merged_config__.__freeze__(inverse=mutable)
 
     def __repr__(self) -> str:
         return f"[{', '.join(src.name for src in self.__sources__)}] -> {self.__merged_config__}"
