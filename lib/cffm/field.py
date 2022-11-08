@@ -1,5 +1,6 @@
 import types
 from abc import ABCMeta, abstractmethod
+from dataclasses import dataclass, KW_ONLY, field as dc_field, replace
 from typing import Any, get_args, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -16,27 +17,17 @@ class _MissingObject:
 MISSING = _MissingObject()
 
 
-#@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, repr=False, slots=True)
 class Field(metaclass=ABCMeta):
-    __slots__ = ('name', 'config_cls', 'description', 'type')
-
-    name: str | None
-    config_cls: "type[Config] | None"
-    description: str | None
-    type: type | _MissingObject
-
-    def __init__(self, type: type | _MissingObject = MISSING,
-                 description: str | None = None,
-                 name: str | None = None,
-                 config_cls: "type[Config] | None" = None) -> None:
-        self.type = type
-        self.description = description
-        self.name = name
-        self.config_cls = config_cls
+    _: KW_ONLY
+    name: str | None = None
+    config_cls: "type[Config] | None" = None
+    description: str | None = None
+    type: "type | _MissingObject" = dc_field(default=MISSING)
 
     def __set_name__(self, owner: "type[Config]", name: str) -> None:
-        self.name = name
-        self.config_cls = owner
+        object.__setattr__(self, 'name', name)
+        object.__setattr__(self, 'config_cls', owner)
 
     def __repr__(self) -> str:
         field_type = getattr(self.type, '__name__', str(self.type))
@@ -45,9 +36,7 @@ class Field(metaclass=ABCMeta):
         return f"<Field {self.config_cls.__name__}.{self.name}: {field_type}>"
 
     def update(self, **kwargs) -> "Field":
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-        return self
+        return replace(self, **kwargs)
 
     @abstractmethod
     def create_default(self) -> Any:
@@ -94,29 +83,13 @@ class Field(metaclass=ABCMeta):
             raise AttributeError(self.name) from None
 
 
+@dataclass(frozen=True, repr=False, slots=True)
 class DataField(Field):
-    __slots__ = ('default', 'ref', 'env', 'converter')
-
-    default: Any
-    ref: "str | Callable[[Field, type[Config]], Any] | None"
-    env: str | None
-    converter: "Callable[[Field, Any], Any] | None"
-
-    def __init__(self, default: Any | _MissingObject = MISSING,
-                 type: type | _MissingObject = MISSING,
-                 description: str | None = None, *,
-                 ref: "str | Callable[[Field, type[Config]], Any] | None" = None,
-                 env: str | None = None,
-                 converter: "Callable[[Field, Any], Any] | None" = None,
-                 name: str | None = None,
-                 config_cls: "type[Config] | None" = None
-                 ) -> None:
-        super().__init__(type=type, description=description,
-                         name=name, config_cls=config_cls)
-        self.default = default
-        self.ref = ref
-        self.env = env
-        self.converter = converter
+    default: Any = MISSING
+    _: KW_ONLY = KW_ONLY
+    ref: "str | Callable[[Field, type[Config]], Any] | None" = None
+    env: str | None = None
+    converter: "Callable[[Field, Any], Any] | None" = None
 
     def create_default(self) -> Any:
         return self.default
