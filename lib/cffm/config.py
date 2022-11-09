@@ -6,8 +6,6 @@ from importlib.metadata import entry_points
 import inspect
 from typing import overload, Any, ClassVar
 
-__all__ = ('config', 'section', 'Config', 'Section',
-           'sections_from_entrypoints', 'freeze', 'unfreeze')
 
 from cffm import MISSING
 from cffm.field import _MissingObject, Field, DataField, SectionField, FieldPath

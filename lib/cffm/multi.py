@@ -1,7 +1,7 @@
 from typing import Any
 
-from cffm.config import Config, Section, unfrozen
-from cffm.field import MISSING, _MissingObject, Field, FieldPath
+from cffm.config import Config, Section, unfrozen, recurse_fields
+from cffm.field import MISSING, _MissingObject, Field, FieldPath, DataField
 from cffm.source import Source, CustomSource
 
 
@@ -24,41 +24,23 @@ class MultiSourceConfig:
         return f"[{', '.join(src.name for src in self.__sources__)}] -> {self.__merged_config__}"
 
     def __build_merged__(self) -> Config:
-        def apply(cfg: Config, configs: list[Config]):
-            for name, field in cfg.__fields__.items():
-                match getattr(cfg, name, MISSING):
-                    case Section() as section:
-                        apply(section, [getattr(c, name, MISSING) for c in configs])
-                    case _MissingObject():
-                        for c in configs:
-                            if (value := getattr(c, name, MISSING)) is not MISSING:
-                                setattr(cfg, name, value)
-
         with unfrozen(self.__config_cls__()) as config:
-            apply(config, [self.__configs__[src.name] for src in reversed(self.__sources__)])
-
+            for path, field in recurse_fields(config):
+                if isinstance(field, DataField):
+                    for cfg in reversed(self.__configs__.values()):
+                        if (value := cfg[path]) is not MISSING:
+                            config[path] = value
+                            break
         return config
 
     def __build_custom__(self) -> Config:
-        def apply_diff(diff_cfg: Config, custom: Config, configs: list[Config]):
-            for name, field in diff_cfg.__fields__.items():
-                match getattr(diff_cfg, name, MISSING):
-                    case Section() as section:
-                        apply_diff(section, getattr(custom, name),
-                                   [getattr(cfg, name) for cfg in configs])
-                    case _MissingObject():
-                        for cfg in configs:
-                            if (value := getattr(cfg, name, MISSING)) is not MISSING:
-                                break
-                        else:
-                            value = MISSING
-
-                        if (custom_value := getattr(custom, name, MISSING)) != value:
-                            setattr(diff_cfg, name, custom_value)
+        merged_cfg = self.__build_merged__()
 
         with unfrozen(self.__config_cls__()) as config:
-            apply_diff(config, self.__merged_config__,
-            [self.__configs__[src.name] for src in reversed(self.__sources__)])
+            for path, field in recurse_fields(config):
+                if isinstance(field, DataField):
+                    if (value := self.__merged_config__[path]) != merged_cfg[path]:
+                        config[path] = value
 
         return config
 
