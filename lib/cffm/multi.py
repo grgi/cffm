@@ -1,7 +1,7 @@
 from typing import Any
 
 from cffm.config import Config, Section, unfrozen
-from cffm.field import MISSING, _MissingObject
+from cffm.field import MISSING, _MissingObject, Field, FieldPath
 from cffm.source import Source, CustomSource
 
 
@@ -82,3 +82,12 @@ class MultiSourceConfig:
             self.__merged_config__ = self.__build_merged__()
         else:
             raise TypeError("Configuration is read-only")
+
+    def __getitem__(self, field_or_path: Field | FieldPath) -> Any:
+        return self.__merged_config__[field_or_path]
+
+    def __setitem__(self, field_or_path: Field | FieldPath, value: Any):
+        self.__merged_config__[field_or_path] = value
+
+    def __delitem__(self, field_or_path: Field | FieldPath):
+        del self.__merged_config__[field_or_path]
