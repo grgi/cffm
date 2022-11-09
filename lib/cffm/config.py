@@ -10,7 +10,7 @@ __all__ = ('config', 'section', 'Config', 'Section',
            'sections_from_entrypoints', 'freeze', 'unfreeze')
 
 from cffm import MISSING
-from cffm.field import _MissingObject, Field, DataField, SectionField
+from cffm.field import _MissingObject, Field, DataField, SectionField, FieldPath
 
 _marker = object()
 
@@ -75,7 +75,7 @@ class Config:
     def __repr__(self) -> str:
         def gen() -> str:
             for name, field in self.__fields__.items():
-                field_type = getattr(field.type, '__name__', str(field.type))
+                field_type = getattr(field.__type__, '__name__', str(field.__type__))
                 if (value := getattr(self, name, MISSING)) is not MISSING:
                     yield f"{name}: {field_type} = {value!r}"
         return f"{type(self).__name__}({', '.join(gen())})"
@@ -98,17 +98,47 @@ class Config:
     def __freeze__(self, inverse: bool = False) -> None:
         self.__options__.frozen = not inverse
 
-    def __getitem__(self, field: Field) -> Any:
-        inst = self.__field_instance_mapping__[field]
-        return getattr(inst, field.name)
+    def __getitem__(self, field_or_path: Field | FieldPath) -> Any:
+        match field_or_path:
+            case Field() as field:
+                inst = self.__field_instance_mapping__[field]
+                return getattr(inst, field.__field_name__)
+            case FieldPath([name]):
+                return getattr(self, name)
+            case FieldPath((name, *sub)):
+                return self[name][FieldPath(sub)]
+            case str() as path:
+                return self[FieldPath(path)]
 
-    def __setitem__(self, field: Field, value: Any):
-        inst = self.__field_instance_mapping__[field]
-        setattr(inst, field.name, value)
+        raise KeyError(field_or_path)
 
-    def __delitem__(self, field: Field):
-        inst = self.__field_instance_mapping__[field]
-        setattr(inst, field.name, MISSING)
+    def __setitem__(self, field_or_path: Field | FieldPath, value: Any):
+        match field_or_path:
+            case Field() as field:
+                inst = self.__field_instance_mapping__[field]
+                setattr(inst, field.__field_name__, value)
+            case FieldPath([name]):
+                setattr(self, name, value)
+            case FieldPath((name, *sub)):
+                getattr(self, name)[FieldPath(sub)] = value
+            case str() as path:
+                self[FieldPath(path)] = value
+            case _:
+                raise KeyError(field_or_path)
+
+    def __delitem__(self, field_or_path: Field | FieldPath):
+        match field_or_path:
+            case Field() as field:
+                inst = self.__field_instance_mapping__[field]
+                setattr(inst, field.__field_name__, MISSING)
+            case FieldPath([name]):
+                delattr(self, name)
+            case FieldPath((name, *sub)):
+                del getattr(self[name])[FieldPath(sub)]
+            case str() as path:
+                del self[FieldPath(path)]
+            case _:
+                raise KeyError(field_or_path)
 
 
 class Section(Config):
@@ -171,7 +201,7 @@ def _process_def(config_def: type, *additional_sections: type[Section]) \
                 case _MissingObject():
                     yield name, DataField(name=name, type=field_type)
                 case Field() as f:
-                    yield name, f.update(name=name, type=field_type)
+                    yield name, f.__update__(__field_name__=name, __type__=field_type)
                 case _ as v:
                     yield name, DataField(default=v, name=name, type=field_type)
 

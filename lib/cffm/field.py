@@ -1,8 +1,8 @@
 import types
 from abc import ABCMeta, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, KW_ONLY, field as dc_field, replace
-from typing import Any, get_args, Callable, TYPE_CHECKING
+from typing import Any, get_args, Callable, TYPE_CHECKING, NewType
 
 if TYPE_CHECKING:
     from cffm.config import Config, Section
@@ -18,33 +18,71 @@ class _MissingObject:
 MISSING = _MissingObject()
 
 
-@dataclass(frozen=True, repr=False, slots=True)
+class FieldPath(str):
+    __slots__ = ('components',)
+    __match_args__ = ('components',)
+
+    components: tuple[str]
+
+    def __new__(cls, str_or_tuple: str | Iterable[str] = ()):
+        match str_or_tuple:
+            case str() as value:
+                components = value.split('.') if value else ()
+            case Iterable() as components:
+                value = '.'.join(components)
+            case _:
+                raise ValueError(f"Value is not a FieldPath: {str_or_tuple}")
+
+        path = super().__new__(cls, value)
+        path.components = tuple(components)
+        return path
+
+    def __len__(self) -> int:
+        return len(self.components)
+
+    def __getitem__(self, index_or_slice):
+        return FieldPath(self.components[index_or_slice])
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.components)
+
+
+@dataclass(frozen=True, init=False, repr=False, slots=True)
 class Field(metaclass=ABCMeta):
-    _: KW_ONLY
-    name: str | None = None
-    config_cls: "type[Config] | None" = None
-    description: str | None = None
-    type: "type | _MissingObject" = dc_field(default=MISSING)
+    __field_name__: str | None = None
+    __config_cls__: "type[Config] | None" = None
+    __description__: str | None = None
+    __type__: type | None = None
+
+    def __init__(self, *,
+                 name: str | None = None,
+                 config_cls: "type[Config] | None" = None,
+                 description: str | None = None,
+                 type: type | None = None):
+        object.__setattr__(self, '__field_name__', name)
+        object.__setattr__(self, '__config_cls__', config_cls)
+        object.__setattr__(self, '__description__', description)
+        object.__setattr__(self, '__type__', type)
 
     def __set_name__(self, owner: "type[Config]", name: str) -> None:
-        object.__setattr__(self, 'name', name)
-        object.__setattr__(self, 'config_cls', owner)
+        object.__setattr__(self, '__field_name__', name)
+        object.__setattr__(self, '__config_cls__', owner)
 
     def __repr__(self) -> str:
-        field_type = getattr(self.type, '__name__', str(self.type))
-        if self.config_cls is None:
+        field_type = getattr(self.__type__, '__name__', str(self.__type__))
+        if self.__config_cls__ is None:
             return f"<Unbound Field: {field_type}>"
-        return f"<Field {self.config_cls.__name__}.{self.name}: {field_type}>"
+        return f"<Field {self.__config_cls__.__name__}.{self.__field_name__}: {field_type}>"
 
-    def update(self, **kwargs) -> "Field":
+    def __update__(self, **kwargs) -> "Field":
         return replace(self, **kwargs)
 
     @abstractmethod
-    def create_default(self, instance: "Config") -> Any:
+    def __create_default__(self, instance: "Config") -> Any:
         ...
 
     @abstractmethod
-    def convert(self, value: Any) -> Any:
+    def __convert__(self, value: Any) -> Any:
         ...
 
     def __get__(self, instance: "Config | None", owner: "type[Config]") \
@@ -52,29 +90,29 @@ class Field(metaclass=ABCMeta):
         if instance is None:
             return self
 
-        return vars(instance)[self.name]
+        return vars(instance)[self.__field_name__]
 
     def __set__(self, instance: "Config", value: Any) -> None:
         data = vars(instance)
 
         # Allow initialisation but no further modification if instance is frozen
-        if self.name in data and instance.__options__.frozen:
+        if self.__field_name__ in data and instance.__options__.frozen:
             raise TypeError(
-                f"{self.config_cls.__name__} is frozen: cannot replace {self.name}"
+                f"{self.__config_cls__.__name__} is frozen: cannot replace {self.__field_name__}"
             )
 
-        data[self.name] = self.convert(value)
+        data[self.__field_name__] = self.__convert__(value)
 
     def __delete__(self, instance: "Config") -> None:
         if instance.__options.__frozen:
             raise TypeError(
-                f"{self.config_cls.__name__} is frozen: cannot delete {self.name}"
+                f"{self.__config_cls__.__name__} is frozen: cannot delete {self.__field_name__}"
             )
 
         try:
-            del vars(instance)[self.name]
+            del vars(instance)[self.__field_name__]
         except KeyError:
-            raise AttributeError(self.name) from None
+            raise AttributeError(self.__field_name__) from None
 
 
 @dataclass(frozen=True, repr=False, slots=True)
@@ -85,26 +123,26 @@ class DataField(Field):
     env: str | None = None
     converter: "Callable[[Field, Any], Any] | None" = None
 
-    def create_default(self, instance: "Config") -> Any:
+    def __create_default__(self, instance: "Config") -> Any:
         if self.default is MISSING and self.ref is not None:
             return self.ref(self, instance)
         return self.default
 
-    def convert(self, value: Any) -> Any:
+    def __convert__(self, value: Any) -> Any:
         if value is MISSING:
             return MISSING
 
         if self.converter is not None:
             return self.converter(self, value)
 
-        match self.type:
+        match self.__type__:
             case type():
-                return self.type(value)
+                return self.__type__(value)
             case types.UnionType():
-                for t in get_args(self.type):
+                for t in get_args(self.__type__):
                     if isinstance(value, t):
                         return value
-                return get_args(self.type)[0](value)
+                return get_args(self.__type__)[0](value)
 
 
 class SectionField(Field):
@@ -121,49 +159,49 @@ class SectionField(Field):
         )
 
     def __repr__(self) -> str:
-        if self.config_cls is None:
-            return f"<Unbound Section: {self.type.__name__}>"
-        return f"<Section {self.config_cls.__name__}.{self.name}: {self.type.__name__}>"
+        if self.__config_cls__ is None:
+            return f"<Unbound Section: {self.__type__.__name__}>"
+        return f"<Section {self.__config_cls__.__name__}.{self.__field_name__}: {self.__type__.__name__}>"
 
-    def create_default(self, instance: "Config") -> Any:
-        return self.type(instance)
+    def __create_default__(self, instance: "Config") -> Any:
+        return self.__type__(instance)
 
-    def convert(self, value: Any) -> Any:
+    def __convert__(self, value: Any) -> Any:
         pass
 
     def __set__(self, instance: "Config", value: Any) -> None:
         data = vars(instance)
 
         # Allow initialisation but no further modification
-        if self.name in data:
+        if self.__field_name__ in data:
             raise TypeError(
-                f"Section {self.config_cls.__name__}.{self.name} cannot be replaced"
+                f"Section {self.__config_cls__.__name__}.{self.__field_name__} cannot be replaced"
             )
 
         if value is MISSING:
-            value = self.type(instance)
+            value = self.__type__(instance)
         elif isinstance(value, dict):
-            value = self.type(instance, **value)
-        elif not isinstance(value, self.type):
+            value = self.__type__(instance, **value)
+        elif not isinstance(value, self.__type__):
             raise TypeError(f"Cannot set Section: {value} has invalid type")
 
-        data[self.name] = value
+        data[self.__field_name__] = value
 
     def __delete__(self, instance: "Config") -> None:
         raise TypeError(
-            f"Section {self.config_cls.__name__}.{self.name} cannot be deleted"
+            f"Section {self.__config_cls__.__name__}.{self.__field_name__} cannot be deleted"
         )
 
     def __getattr__(self, name: str) -> Field:
-        return getattr(self.type, name)
+        return getattr(self.__type__, name)
 
     def __dir__(self) -> Iterable[str]:
         yield from super().__dir__()
-        yield from self.type.__fields__
+        yield from self.__type__.__fields__
 
 
 def field(default: Any | _MissingObject = MISSING,
           description: str | None = None, *,
           env: str | None = None,
           converter: "Callable[[Any, Field], Any]" = None) -> Field:
-    return DataField(default, description=description, env=env, converter=converter)
+    return DataField(default, __description__=description, env=env, converter=converter)

@@ -57,7 +57,7 @@ class DefaultSource(Source):
                     case Section() as section:
                         apply_defaults(section)
                     case _MissingObject():
-                        setattr(cfg, name, field.create_default(cfg))
+                        setattr(cfg, name, field.__create_default__(cfg))
             return cfg
 
         with unfrozen(config_cls()) as config:
