@@ -187,11 +187,12 @@ def _process_def(config_def: type, *additional_sections: type[Section]) \
                 continue
             match cls_vars.pop(name, MISSING):
                 case _MissingObject():
-                    yield name, DataField(name=name, type=field_type)
+                    yield name, DataField(__field_name__=name, __type__=field_type)
                 case Field() as f:
                     yield name, f.__update__(__field_name__=name, __type__=field_type)
                 case _ as v:
-                    yield name, DataField(default=v, name=name, type=field_type)
+                    yield name, DataField(__default__=v, __field_name__=name,
+                                          __type__=field_type)
 
         for name, attr in cls_vars.items():
             if name not in sections and isinstance(attr, type) \

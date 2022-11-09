@@ -47,22 +47,12 @@ class FieldPath(str):
         return iter(self.components)
 
 
-@dataclass(frozen=True, init=False, repr=False, slots=True)
+@dataclass(frozen=True, repr=False, slots=True)
 class Field(metaclass=ABCMeta):
     __field_name__: str | None = None
     __config_cls__: "type[Config] | None" = None
     __description__: str | None = None
     __type__: type | None = None
-
-    def __init__(self, *,
-                 name: str | None = None,
-                 config_cls: "type[Config] | None" = None,
-                 description: str | None = None,
-                 type: type | None = None):
-        object.__setattr__(self, '__field_name__', name)
-        object.__setattr__(self, '__config_cls__', config_cls)
-        object.__setattr__(self, '__description__', description)
-        object.__setattr__(self, '__type__', type)
 
     def __set_name__(self, owner: "type[Config]", name: str) -> None:
         object.__setattr__(self, '__field_name__', name)
@@ -117,23 +107,22 @@ class Field(metaclass=ABCMeta):
 
 @dataclass(frozen=True, repr=False, slots=True)
 class DataField(Field):
-    default: Any = MISSING
-    _: KW_ONLY = KW_ONLY
-    ref: "Callable[[Field, Config]], Any] | None" = None
-    env: str | None = None
-    converter: "Callable[[Field, Any], Any] | None" = None
+    __default__: Any = MISSING
+    __ref__: "Callable[[Field, Config]], Any] | None" = None
+    __env__: str | None = None
+    __converter__: "Callable[[Field, Any], Any] | None" = None
 
     def __create_default__(self, instance: "Config") -> Any:
-        if self.default is MISSING and self.ref is not None:
-            return self.ref(self, instance)
-        return self.default
+        if self.__default__ is MISSING and self.__ref__ is not None:
+            return self.__ref__(self, instance)
+        return self.__default__
 
     def __convert__(self, value: Any) -> Any:
         if value is MISSING:
             return MISSING
 
-        if self.converter is not None:
-            return self.converter(self, value)
+        if self.__converter__ is not None:
+            return self.__converter__(self, value)
 
         match self.__type__:
             case type():
@@ -153,9 +142,9 @@ class SectionField(Field):
                  name: str | None = None,
                  config_cls: "type[Config] | None" = None) -> None:
         super().__init__(
-            type=section_cls,
-            description=section_cls.__doc__ if description is None else description,
-            name=name, config_cls=config_cls
+            __type__=section_cls,
+            __description__=section_cls.__doc__ if description is None else description,
+            __field_name__=name, __config_cls__=config_cls
         )
 
     def __repr__(self) -> str:
@@ -204,4 +193,5 @@ def field(default: Any | _MissingObject = MISSING,
           description: str | None = None, *,
           env: str | None = None,
           converter: "Callable[[Any, Field], Any]" = None) -> Field:
-    return DataField(default, __description__=description, env=env, converter=converter)
+    return DataField(__default__=default, __description__=description,
+                     __env__=env, __converter__=converter)

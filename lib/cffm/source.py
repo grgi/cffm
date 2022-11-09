@@ -141,8 +141,8 @@ class EnvironmentSource(Source):
     def load(self, config_cls: type[Config]) -> Config:
         with unfrozen(config_cls()) as config:
             for path, field in recurse_fields(config):
-                if isinstance(field, DataField) and isinstance(field.env, str):
-                    config[path] = self._environment.get(field.env, MISSING)
+                if isinstance(field, DataField) and isinstance(field.__env__, str):
+                    config[path] = self._environment.get(field.__env__, MISSING)
 
         return config
 
