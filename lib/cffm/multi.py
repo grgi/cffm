@@ -33,6 +33,11 @@ class MultiSourceConfig:
                             break
         return config
 
+    def __update_merged__(self):
+        frozen = self.__merged_config__.__defaults__.frozen
+        self.__merged_config__ = self.__build_merged__()
+        self.__merged_config__.__defaults__.frozen = frozen
+
     def __build_custom__(self) -> Config:
         merged_cfg = self.__build_merged__()
 
@@ -73,3 +78,31 @@ class MultiSourceConfig:
 
     def __delitem__(self, field_or_path: Field | FieldPath):
         del self.__merged_config__[field_or_path]
+
+    def __add_source__(self, source: Source, index: int | None = None):
+        if source.name in (src.name for src in self.__sources__):
+            raise ValueError(f"Source '{source.name}' is already defined")
+
+        if index is None:
+            self.__sources__.append(source)
+        else:
+            self.__sources__.insert(index, source)
+
+        self.__configs__ = {
+            src.name: src.load(self.__config_cls__)
+            if (cfg := self.__configs__.get(src.name, None)) is None
+            else cfg
+            for src in self.__sources__
+        }
+        self.__update_merged__()
+
+    def __del_source__(self, name: str):
+        for i, source in enumerate(self.__sources__):
+            if source.name == name:
+                del self.__sources__[i]
+                break
+        else:
+            raise ValueError(f"No source with name '{name}'")
+
+        del self.__configs__[name]
+        self.__update_merged__()
