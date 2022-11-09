@@ -10,12 +10,12 @@ Config Sources
 import io
 import os
 from abc import ABCMeta, abstractmethod
-from collections.abc import Iterator, Callable
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from cffm.config import Config, unfreeze, Section, unfrozen
-from cffm.field import MISSING, _MissingObject
+from cffm.config import Config, unfreeze, unfrozen, recurse_fields
+from cffm.field import MISSING, DataField
 
 
 class Source(metaclass=ABCMeta):
@@ -51,18 +51,11 @@ class DefaultSource(Source):
         super().__init__(name)
 
     def load(self, config_cls: type[Config]) -> Config:
-        def apply_defaults(cfg: Config):
-            for name, field in cfg.__fields__.items():
-                match getattr(cfg, name, MISSING):
-                    case Section() as section:
-                        apply_defaults(section)
-                    case _MissingObject():
-                        setattr(cfg, name, field.__create_default__(cfg))
-            return cfg
-
         with unfrozen(config_cls()) as config:
-            apply_defaults(config)
-
+            for path, field in recurse_fields(config):
+                if isinstance(field, DataField):
+                    config[path] = field.__create_default__(
+                        config.__field_instance_mapping__[field])
         return config
 
     def validate(self, config_cls: type[Config], strict: bool = False) -> bool:
@@ -146,18 +139,10 @@ class EnvironmentSource(Source):
         self._environment = environment
 
     def load(self, config_cls: type[Config]) -> Config:
-        def apply_envvars(cfg: Config):
-            for name, field in cfg.__fields__.items():
-                match getattr(cfg, name, MISSING):
-                    case Section() as section:
-                        apply_envvars(section)
-                    case _MissingObject():
-                        if isinstance(field.env, str):
-                            setattr(cfg, name,
-                                    self._environment.get(field.env, MISSING))
-
         with unfrozen(config_cls()) as config:
-            apply_envvars(config)
+            for path, field in recurse_fields(config):
+                if isinstance(field, DataField) and isinstance(field.env, str):
+                    config[path] = self._environment.get(field.env, MISSING)
 
         return config
 
