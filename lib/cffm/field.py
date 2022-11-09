@@ -1,5 +1,6 @@
 import types
 from abc import ABCMeta, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass, KW_ONLY, field as dc_field, replace
 from typing import Any, get_args, Callable, TYPE_CHECKING
 
@@ -155,6 +156,10 @@ class SectionField(Field):
 
     def __getattr__(self, name: str) -> Field:
         return getattr(self.type, name)
+
+    def __dir__(self) -> Iterable[str]:
+        yield from super().__dir__()
+        yield from self.type.__fields__
 
 
 def field(default: Any | _MissingObject = MISSING,
