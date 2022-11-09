@@ -21,24 +21,6 @@ class ConfigOptions:
     strict: bool = False
 
 
-class ConfigDef(type):
-
-    __fields__: dict[str, Field]
-    __sections__: "dict[str, Config]"
-
-    @staticmethod
-    def freeze(cfg: "Config"):
-        cfg.__frozen__ = True
-        for name in cfg.__sections__:
-            Config.freeze(getattr(cfg, name))
-
-    @staticmethod
-    def unfreeze(cfg: "Config"):
-        cfg.__frozen__ = False
-        for name in cfg.__sections__:
-            Config.unfreeze(getattr(cfg, name))
-
-
 class Config:
     __defaults__: ClassVar[ConfigOptions] = ConfigOptions()
     __fields__: ClassVar[dict[str, Field]]
@@ -165,6 +147,14 @@ def unfreeze(cfg: Config):
     cfg.__options__.frozen = False
 
 
+def recurse_fields(cfg: Config | type[Config]) -> Iterator[tuple[FieldPath, Field]]:
+    for name, field in cfg.__fields__.items():
+        yield FieldPath(name), field
+        if isinstance(field, SectionField):
+            for path, section_field in recurse_fields(cfg.__sections__[name]):
+                yield FieldPath((name, *path)), section_field
+
+
 @contextmanager
 def unfrozen(cfg: Config):
     was_frozen = cfg.__options__.frozen
@@ -229,7 +219,6 @@ def _process_def(config_def: type, *additional_sections: type[Section]) \
         __annotations__=annotations,
         __fields__=fields,
         __sections__=sections,
-        # __slots__=tuple(fields),
         __match_args__=tuple(fields),
         **fields
     )
