@@ -19,11 +19,11 @@
 ...     click.echo(cfg.foo)
 
 """
-
+import types
 from enum import Enum
 import functools
 from collections.abc import Sequence, Callable, Container
-from typing import Any
+from typing import Any, get_args
 
 import click
 
@@ -72,6 +72,9 @@ class ConfigOption(click.Option):
 
         if type is None:
             type = field.__type__
+
+        if isinstance(type, types.UnionType):
+            type = get_args(type)[0]
 
         if type is bool:
             is_flag = True

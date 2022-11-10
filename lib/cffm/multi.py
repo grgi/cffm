@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from typing import Any
 
 from cffm.config import Config, Section, unfrozen, recurse_fields
@@ -106,3 +107,7 @@ class MultiSourceConfig:
 
         del self.__configs__[name]
         self.__update_merged__()
+
+    def __dir__(self) -> Iterable[str]:
+        yield from super().__dir__()
+        yield from dir(self.__merged_config__)
