@@ -35,9 +35,9 @@ class MultiSourceConfig:
         return config
 
     def __update_merged__(self):
-        frozen = self.__merged_config__.__defaults__.frozen
+        frozen = self.__merged_config__.__options__.frozen
         self.__merged_config__ = self.__build_merged__()
-        self.__merged_config__.__defaults__.frozen = frozen
+        self.__merged_config__.__options__.frozen = frozen
 
     def __build_custom__(self) -> Config:
         merged_cfg = self.__build_merged__()
