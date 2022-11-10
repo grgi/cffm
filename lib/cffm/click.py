@@ -4,20 +4,24 @@
 >>> from cffm import config
 >>> from cffm.click import ClickSource
 
->>> click_src = ClickSource()
+>>> cli_src = ClickSource()
 
 >>> @config
 >>> class FooConfig:
 ...     foo: int = field(3, "The Foo parameter")
+...     bar: str = field('Bar', "The Bar option")
 
 >>> @click.command()
-... @click_src.option('--foo', FooConfig.foo)
+... @click.option('--foo', field=FooConfig.foo, cls=cli_src.Option)
+... @cli_src.option('--bar', field=FooConfig.bar)
 ... def command():
-...     cfg = click_src.load(FooConfig)
+...     cfg = cli_src.load(FooConfig)
 ...     click.echo(cfg.foo)
 
 """
 
+from enum import Enum
+import functools
 from collections.abc import Sequence, Callable, Container
 from typing import Any
 
@@ -28,12 +32,63 @@ from cffm.field import Field, DataField
 from cffm import MISSING
 from cffm.source import Source
 
+try:
+    from click import EnumChoice
+except ImportError:
+
+    class EnumChoice(click.Choice):
+        def __init__(self, enum_type: type[Enum], case_sensitive: bool = True):
+            super().__init__(
+                choices=[element.name for element in enum_type],
+                case_sensitive=case_sensitive,
+            )
+            self.enum_type = enum_type
+
+        def convert(
+                self, value: Any, param: click.Parameter | None, ctx: click.Context | None
+        ) -> Any:
+            value = super().convert(value=value, param=param, ctx=ctx)
+            if value is None:
+                return None
+            return self.enum_type[value]
+
 
 class ConfigOption(click.Option):
     field: Field
 
-    def __init__(self, *args, field: Field, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, param_decl: Sequence[str] | None = None, *,
+                 field: DataField,
+                 type: click.types.ParamType | Any | None = None,
+                 default: Any | Callable[[], Any] | None = None,
+                 is_flag: bool = False,
+                 expose_value: bool = False,
+                 envvar: Sequence[str] | str | None = None,
+                 show_default: bool = True,
+                 help: str | None = None,
+                 **kwargs):
+
+        if default is None and field.__default__ is not MISSING:
+            default = field.__default__
+
+        if type is None:
+            type = field.__type__
+
+        if type is bool:
+            is_flag = True
+            show_default = False
+
+        if issubclass(type, Enum):
+            if isinstance(default, type):
+                default = default.name
+            type=EnumChoice(type, case_sensitive=False)
+
+        super().__init__(
+            param_decl, type=type, default=default, expose_value=expose_value,
+            envvar=envvar if envvar is not None or field.__env__ is MISSING else field.__env__,
+            help=field.__description__ if help is None else help, is_flag=is_flag,
+            show_default=show_default,
+            **kwargs
+        )
         self.field = field
 
 
@@ -59,17 +114,28 @@ class ClickSource(Source):
 
     def _callback(self, field: DataField) \
             -> Callable[[click.Context, click.Parameter, Any], Any]:
-        def callback(ctx: click.Context, param: click.Parameter, value: Any) -> Any:
+        def callback(_ctx: click.Context, _param: click.Parameter, value: Any) -> Any:
             self._data[field] = value
             return value
         return callback
 
-    def option(self, *param_decls: Sequence[str], field: DataField) -> Callable:
-        return click.option(*param_decls,
-                            default=None if field.__default__ is MISSING else field.__default__,
-                            callback=self._callback(field), expose_value=False,
-                            help=field.__description__, cls=ConfigOption, field=field
-                            )
+    def option(self, *param_decls: Sequence[str], field: DataField,
+               callback: Callable[[click.Context, click.Parameter, Any], Any] | None = None,
+               **kwargs) -> Callable:
+        return click.option(*param_decls, field=field, cls=ConfigOption,
+                            callback=self._callback(field) if callback is None else callback,
+                            **kwargs)
+
+    @property
+    def Option(self):
+        @functools.wraps(ConfigOption)
+        def wrapper(*args, field: DataField, callback=None, **kwargs):
+            return ConfigOption(
+                *args, field=field,
+                callback=self._callback(field) if callback is None else callback,
+                **kwargs
+            )
+        return wrapper
 
     def add_options_from_section(self, section: type[Config], exclude_fields: Container[Field]):
         def wrapper(callback: Callable) -> Callable:
