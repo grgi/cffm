@@ -56,20 +56,14 @@ class MultiSourceConfig:
     def __setattr__(self, key: str, value: Any):
         if key.startswith('__'):
             super().__setattr__(key, value)
-        elif (custom := self.__configs__.get('custom')) is not None:
-            setattr(custom, key, value)
-            self.__merged_config__ = self.__build_merged__()
         else:
-            raise TypeError("Configuration is read-only")
+            setattr(self.__merged_config__, key, value)
 
     def __delattr__(self, key: str):
         if key.startswith('__'):
             super().__delattr__(key)
-        elif (custom := self.__configs__.get('custom')) is not None:
-            delattr(custom, key)
-            self.__merged_config__ = self.__build_merged__()
         else:
-            raise TypeError("Configuration is read-only")
+            delattr(self.__merged_config__, key)
 
     def __getitem__(self, field_or_path: Field | FieldPath) -> Any:
         return self.__merged_config__[field_or_path]
