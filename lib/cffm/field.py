@@ -1,8 +1,9 @@
 import types
 from abc import ABCMeta, abstractmethod
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, KW_ONLY, field as dc_field, replace
-from typing import Any, get_args, Callable, TYPE_CHECKING, NewType
+from dataclasses import dataclass, replace
+from enum import Enum
+from typing import Any, get_args, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from cffm.config import Config, Section
@@ -126,6 +127,11 @@ class DataField(Field):
 
         match self.__type__:
             case type():
+                if issubclass(self.__type__, Enum):
+                    try:
+                        return self.__type__[value]
+                    except KeyError:
+                        return self.__type__(value)
                 return self.__type__(value)
             case types.UnionType():
                 for t in get_args(self.__type__):
