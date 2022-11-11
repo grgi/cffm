@@ -50,6 +50,20 @@ class MultiSourceConfig:
 
         return config
 
+    def __update_attribute__(self, field_or_path: Field | FieldPath, *sources: str):
+        for src in self.__sources__:
+            if not sources or src.name in sources:
+                with unfrozen(self.__configs__[src.name]) as cfg:
+                    cfg[field_or_path] = src.get(field_or_path)
+
+        with unfrozen(self.__merged_config__) as merged_config:
+            for cfg in reversed(self.__configs__.values()):
+                if (value := cfg[field_or_path]) is not MISSING:
+                    merged_config[field_or_path] = value
+                    break
+            else:
+                merged_config[field_or_path] = MISSING
+
     def __getattr__(self, key: str) -> Any:
         return getattr(self.__merged_config__, key)
 
