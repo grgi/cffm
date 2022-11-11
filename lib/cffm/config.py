@@ -78,6 +78,17 @@ class Config:
     def __freeze__(self, inverse: bool = False) -> None:
         self.__options__.frozen = not inverse
 
+    def __class_getitem__(cls, field_path: FieldPath) -> Field:
+        match field_path:
+            case FieldPath([name]):
+                return cls.__fields__[name]
+            case FieldPath((name, *sub)):
+                return cls.__sections__[name][FieldPath(sub)]
+            case str() as path:
+                return cls[FieldPath(path)]
+
+        raise KeyError(field_path)
+
     def __getitem__(self, field_or_path: Field | FieldPath) -> Any:
         match field_or_path:
             case Field() as field:
