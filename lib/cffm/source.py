@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from cffm.config import Config, unfreeze, unfrozen, recurse_fields
-from cffm.field import MISSING, DataField
+from cffm.field import MISSING, DataField, FieldPath
 
 
 class Source(metaclass=ABCMeta):
@@ -138,13 +138,36 @@ class EnvironmentSource(Source):
         self._separator = separator
         self._environment = environment
 
+    def _path2env_name(self, path: FieldPath, field: DataField) -> str:
+        if isinstance(field.__env__, str):
+            return field.__env__
+        elif self._auto:
+            def gen():
+                if self._prefix:
+                    yield self._prefix
+                yield from path.upper()
+
+            return self._separator.join(gen())
+        return ''
+
     def load(self, config_cls: type[Config]) -> Config:
         with unfrozen(config_cls()) as config:
             for path, field in recurse_fields(config):
-                if isinstance(field, DataField) and isinstance(field.__env__, str):
-                    config[path] = self._environment.get(field.__env__, MISSING)
-
+                if isinstance(field, DataField):
+                    config[path] = self._environment.get(
+                        self._path2env_name(path, field), MISSING)
         return config
+
+    def save(self, config: Config):
+        """Stores the config into the environment"""
+        for path, field in recurse_fields(config):
+            if isinstance(field, DataField) and \
+                    (env_name := self._path2env_name(path, field)):
+                if (value := config[path]) is MISSING:
+                    if env_name in self._environment:
+                        del self._environment[env_name]
+                else:
+                    self._environment[env_name] = str(field.__serialize__(value))
 
     def validate(self, config_cls: type[Config], strict: bool = False):
         pass
