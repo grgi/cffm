@@ -132,12 +132,22 @@ class DataField(Field):
                         return self.__type__[value]
                     except KeyError:
                         return self.__type__(value)
+                elif self.__type__ is bool:
+                    if isinstance(value, str):
+                        return value.lower() in ('yes', 'y', 't', 'true', '1')
+                    return bool(value)
                 return self.__type__(value)
             case types.UnionType():
                 for t in get_args(self.__type__):
                     if isinstance(value, t):
                         return value
                 return get_args(self.__type__)[0](value)
+
+    @staticmethod
+    def __serialize__(value: Any) -> Any:
+        if isinstance(value, Enum):
+            return value.name
+        return value
 
 
 class SectionField(Field):
