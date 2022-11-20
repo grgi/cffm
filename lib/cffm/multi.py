@@ -9,20 +9,20 @@ from cffm.source import Source, CustomSource
 class MultiSourceConfig:
 
     __config_cls__: type[Config]
-    __sources__: list[Source]
+    __sources__: dict[str, Source]
     __configs__: dict[str, Config]
     __merged_config__: Config
 
     def __init__(self, config_def: type[Config], /, *sources: Source,
                  mutable: bool = True):
         self.__config_cls__ = config_def
-        self.__sources__ = list(sources)
+        self.__sources__ = {src.name: src for src in sources}
         self.__configs__ = {source.name: source.load(config_def) for source in sources}
         self.__merged_config__ = self.__build_merged__()
         self.__merged_config__.__freeze__(inverse=mutable)
 
     def __repr__(self) -> str:
-        return f"[{', '.join(src.name for src in self.__sources__)}] -> {self.__merged_config__}"
+        return f"[{', '.join(self.__sources__)}] -> {self.__merged_config__}"
 
     def __build_merged__(self) -> Config:
         with unfrozen(self.__config_cls__()) as config:
@@ -51,8 +51,8 @@ class MultiSourceConfig:
         return config
 
     def __update_attribute__(self, field_or_path: Field | FieldPath, *sources: str):
-        for src in self.__sources__:
-            if not sources or src.name in sources:
+        for name, src in self.__sources__.items():
+            if not sources or name in sources:
                 with unfrozen(self.__configs__[src.name]) as cfg:
                     cfg[field_or_path] = src.get(field_or_path)
 
@@ -89,27 +89,31 @@ class MultiSourceConfig:
         del self.__merged_config__[field_or_path]
 
     def __add_source__(self, source: Source, index: int | None = None):
-        if source.name in (src.name for src in self.__sources__):
+        if source.name in self.__sources__:
             raise ValueError(f"Source '{source.name}' is already defined")
 
         if index is None:
-            self.__sources__.append(source)
+            self.__sources__[source.name] = source
         else:
-            self.__sources__.insert(index, source)
+            self.__sources__ = {
+                name: src for i, (name, src) in enumerate(self.__sources__.items())
+                if i < index
+            } | {source.name: source} | {
+                name: src for i, (name, src) in enumerate(self.__sources__.items())
+                if i >= index
+            }
 
         self.__configs__ = {
-            src.name: src.load(self.__config_cls__)
+            name: src.load(self.__config_cls__)
             if (cfg := self.__configs__.get(src.name, None)) is None
             else cfg
-            for src in self.__sources__
+            for name, src in self.__sources__.items()
         }
         self.__update_merged__()
 
     def __del_source__(self, name: str):
-        for i, source in enumerate(self.__sources__):
-            if source.name == name:
-                del self.__sources__[i]
-                break
+        if name in self.__sources__:
+            del self.__sources__[name]
         else:
             raise ValueError(f"No source with name '{name}'")
 
