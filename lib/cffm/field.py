@@ -47,6 +47,12 @@ class FieldPath(str):
     def __iter__(self) -> Iterator[str]:
         return iter(self.components)
 
+    def upper(self) -> "FieldPath":
+        return FieldPath(super().upper())
+
+    def lower(self) -> "FieldPath":
+        return FieldPath(super().lower())
+
 
 @dataclass(frozen=True, repr=False, slots=True)
 class Field(metaclass=ABCMeta):
