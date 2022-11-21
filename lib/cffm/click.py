@@ -96,13 +96,15 @@ class ConfigOption(click.Option):
 
 
 class ClickSource(Source):
-    __slots__ = ('_data',)
+    __slots__ = ('_data', '_handlers')
 
     _data: dict[Field, Any]
+    _handlers: list[Callable[[Source, Field, Any], None]]
 
     def __init__(self, name: str = 'CLI'):
         super().__init__(name)
         self._data = {}
+        self._handlers = []
 
     def load(self, config_cls: type[Config]) -> Config:
         with unfrozen(config_cls()) as config:
@@ -115,10 +117,15 @@ class ClickSource(Source):
     def validate(self, config_cls: type[Config], strict: bool = False):
         pass
 
+    def notify(self, handler: Callable[[Source, Field, Any], None]):
+        self._handlers.append(handler)
+
     def _callback(self, field: DataField) \
             -> Callable[[click.Context, click.Parameter, Any], Any]:
         def callback(_ctx: click.Context, _param: click.Parameter, value: Any) -> Any:
             self._data[field] = value
+            for handler in self._handlers:
+                handler(self, field, value)
             return value
         return callback
 
