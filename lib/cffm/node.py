@@ -1,11 +1,15 @@
 from anytree import Node
 
+from cffm import MultiSourceConfig
 from cffm.config import Config, Section
-from cffm.field import SectionField, MISSING
+from cffm.field import SectionField
 
 
-def node_from_config(config: Config, parent: Node | None = None, *,
-                     include_type: bool = False) -> Node:
+def node_from_config(config: Config | MultiSourceConfig,
+                     parent: Node | None = None) -> Node:
+    if isinstance(config, MultiSourceConfig):
+        config = config.__merged_config__
+
     if parent is None:
         node = Node(type(Config).__name__)
     else:
@@ -15,12 +19,8 @@ def node_from_config(config: Config, parent: Node | None = None, *,
     for name, field in config.__fields__.items():
         value = getattr(config, name)
         if isinstance(field, SectionField):
-            node_from_config(value, parent=node, include_type=include_type)
+            node_from_config(value, parent=node)
         else:
-            if include_type:
-                field_type = getattr(field.__type__, '__name__', str(field.__type__))
-                Node(f"{name} [{field_type}]: {value}", parent=node)
-            else:
-                Node(f"{name}: {value}", parent=node)
+            Node(name, parent=node, field=field, value=value)
 
     return node
