@@ -66,6 +66,11 @@ class MultiSourceConfig:
             else:
                 merged_config[field_or_path] = MISSING
 
+    def __get_field_source__(self, field_or_path: Field | FieldPath) -> str | None:
+        for name, cfg in reversed(self.__configs__.items()):
+            if cfg[field_or_path] is not MISSING:
+                return name
+
     def __getattr__(self, key: str) -> Any:
         return getattr(self.__merged_config__, key)
 
