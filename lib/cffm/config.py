@@ -255,9 +255,10 @@ def config(maybe_cls=None, /, *, frozen: bool = True, strict: bool = False,
                     for name, section_cls in add_sections.items())
 
     def deco(cls: type) -> type[Config]:
-        config_cls = type(cls.__name__, (Config,),
-                          _process_def(cls, *add_sections) |
-                          dict(__defaults__=options))
+        config_cls = type(
+            cls.__name__, (Config,),
+            _process_def(cls, *add_sections) | dict(__defaults__=options)
+        )
         for section_cls in config_cls.__sections__.values():
             section_cls.__parent_cls__ = config_cls
         return config_cls
@@ -296,3 +297,15 @@ def sections_from_entrypoints(name: str) -> dict[str, type[Section]]:
     return {name[0]: config_cls for name, config_cls in cfg_mapping.items()}
 
 
+def asdict(cfg: Config) -> dict[str, Any]:
+    def gen():
+        for name, field in cfg.__fields__.items():
+            value = getattr(cfg, name, MISSING)
+            match field:
+                case DataField():
+                    if value is not MISSING:
+                        yield name, value
+                case SectionField():
+                    yield name, asdict(value)
+
+    return dict(gen())
