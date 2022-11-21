@@ -9,12 +9,14 @@ Config Sources
 """
 import io
 import os
+import pickle
 from abc import ABCMeta, abstractmethod
 from collections.abc import Callable
+from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from cffm.config import Config, unfreeze, unfrozen, recurse_fields
+from cffm.config import Config, unfreeze, unfrozen, recurse_fields, asdict
 from cffm.field import MISSING, DataField, FieldPath
 
 
@@ -80,18 +82,47 @@ class DataSource(Source):
         pass
 
 
+class SharedMemorySource(Source):
+    __slots__ = ('_shm_name',)
+
+    _shm_name: str | None
+
+    def __init__(self, name: str = 'shm', shm_name: str | None = None):
+        super().__init__(name)
+        self._shm_name = shm_name
+
+    def load(self, config_cls: type[Config]) -> Config:
+        shm = SharedMemory(self._shm_name)
+        config = config_cls(**pickle.loads(cast(bytes, shm.buf)))
+        shm.close()
+        return config
+
+    def dump(self, config: Config) -> SharedMemory:
+        data = pickle.dumps(asdict(config))
+        shm = SharedMemory(self._shm_name, create=True, size=len(data))
+        shm.buf[:] = bytearray(data)
+        shm.close()
+        return shm
+
+    def validate(self, config_cls: type[Config], strict: bool = False) -> bool:
+        pass
+
+
 class ConfigFileSource(Source):
-    __slots__ = ('path', 'loader')
+    __slots__ = ('path', 'loader', 'dumper')
 
     path: Path
     loader: Callable[[io.BufferedReader], dict[str, Any]]
+    dumper: Callable[[io.BufferedReader, dict[str, Any]], None] | None
 
     def __init__(self, path: Path | str,
                  loader: Callable[[io.BufferedReader], dict[str, Any]],
+                 dumper: Callable[[io.BufferedReader, dict[str, Any]], None] | None = None,
                  name: str | None = None):
         if isinstance(path, str):
             path = Path(path)
         self.loader = loader
+        self.dumper = dumper
         if name is None:
             name = path.name
         self.path = path
@@ -100,6 +131,10 @@ class ConfigFileSource(Source):
     def load(self, config_cls: type[Config]) -> Config:
         with self.path.open('rb') as fp:
             return config_cls(**self.loader(fp))
+
+    def save(self, config: Config):
+        with self.path.open('wb') as fp:
+            self.dumper(fp, asdict(config))
 
     def validate(self, config_cls: type[Config], strict: bool = False) -> bool:
         pass
