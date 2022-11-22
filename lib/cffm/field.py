@@ -1,9 +1,10 @@
+import inspect
 import types
 from abc import ABCMeta, abstractmethod
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any, get_args, Callable, TYPE_CHECKING
+from typing import Any, get_args, Callable, TYPE_CHECKING, overload
 
 if TYPE_CHECKING:
     from cffm.config import Config, Section
@@ -156,6 +157,14 @@ class DataField(Field):
         return value
 
 
+def field(default: Any | _MissingObject = MISSING,
+          description: str | None = None, *,
+          env: str | None = None,
+          converter: "Callable[[Any, Field], Any]" = None) -> Field:
+    return DataField(__default__=default, __description__=description,
+                     __env__=env, __converter__=converter)
+
+
 class SectionField(Field):
     __slots__ = ()
 
@@ -211,9 +220,61 @@ class SectionField(Field):
         yield from self.__type__.__fields__
 
 
-def field(default: Any | _MissingObject = MISSING,
-          description: str | None = None, *,
-          env: str | None = None,
-          converter: "Callable[[Any, Field], Any]" = None) -> Field:
-    return DataField(__default__=default, __description__=description,
-                     __env__=env, __converter__=converter)
+@dataclass(frozen=True, repr=False, slots=True)
+class PropertyField(Field):
+    __getter__: "Callable[[Config], Any] | None" = None
+    __setter__: "Callable[[Config, Any], None] | None" = None
+    __deleter__: "Callable[[Config], None] | None" = None
+
+    def __create_default__(self, instance: "Config") -> Any:
+        return self.__getter__(instance)
+
+    def __convert__(self, value: Any) -> Any:
+        return value
+
+    def __call__(self, getter: "Callable[[Config], Any]") -> "PropertyField":
+        object.__setattr__(self, '__getter__', getter)
+        if self.__description__ is None:
+            object.__setattr__(self, '__description__', getter.__doc__)
+        if self.__field_name__ is None:
+            object.__setattr__(self, '__field_name__', getter.__name__)
+        object.__setattr__(self, '__type__', inspect.get_annotations(getter).get('return'))
+        return self
+
+    def setter(self, setter: "Callable[[Config, Any], None]") -> "PropertyField":
+        object.__setattr__(self, '__setter__', setter)
+        return self
+
+    def deleter(self, deleter: "Callable[[Config], None]") -> "PropertyField":
+        object.__setattr__(self, '__deleter__', deleter)
+        return self
+
+    def __get__(self, instance: "Config | None", owner: "type[Config]") \
+            -> "SectionField | Any":
+        if instance is None:
+            return self
+        return self.__getter__(instance)
+
+    def __set__(self, instance: "Config", value: Any) -> None:
+        if value is MISSING:
+            return
+
+        if self.__setter__ is None:
+            raise AttributeError(f"Cannot set readonly field {self.__field_name__}")
+
+        return self.__setter__(instance, self.__convert__(value))
+
+    def __delete__(self, instance: "Config") -> None:
+        if self.__deleter__ is None:
+            raise AttributeError(f"Cannot delete readonly field {self.__field_name__}")
+
+        if instance.__options.__frozen:
+            raise TypeError(
+                f"{self.__config_cls__.__name__} is frozen: cannot delete {self.__field_name__}"
+            )
+
+        return self.__deleter__(instance)
+
+
+def property_field(getter: "Callable[[Config], Any]") -> PropertyField:
+    return PropertyField()(getter)

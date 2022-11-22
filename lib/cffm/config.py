@@ -8,7 +8,7 @@ from typing import overload, Any, ClassVar
 
 
 from cffm import MISSING
-from cffm.field import _MissingObject, Field, DataField, SectionField, FieldPath
+from cffm.field import _MissingObject, Field, DataField, SectionField, FieldPath, PropertyField
 
 _marker = object()
 
@@ -206,7 +206,9 @@ def _process_def(config_def: type, *additional_sections: type[Section]) \
                                           __type__=field_type)
 
         for name, attr in cls_vars.items():
-            if name not in sections and isinstance(attr, type) \
+            if isinstance(attr, PropertyField):
+                yield name, attr
+            elif name not in sections and isinstance(attr, type) \
                     and issubclass(attr, Section):
                 name = attr.__section_name__
                 sections[name] = attr
