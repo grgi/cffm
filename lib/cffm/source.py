@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from cffm.config import Config, unfreeze, unfrozen, recurse_fields, asdict
-from cffm.field import MISSING, DataField, FieldPath
+from cffm.field import MISSING, DataField, FieldPath, PropertyField
 
 
 class Source(metaclass=ABCMeta):
@@ -55,7 +55,7 @@ class DefaultSource(Source):
     def load(self, config_cls: type[Config]) -> Config:
         with unfrozen(config_cls()) as config:
             for path, field in recurse_fields(config):
-                if isinstance(field, DataField):
+                if isinstance(field, DataField) or isinstance(field, PropertyField):
                     config[path] = field.__create_default__(
                         config.__field_instance_mapping__[field])
         return config
@@ -173,7 +173,7 @@ class EnvironmentSource(Source):
         self._separator = separator
         self._environment = environment
 
-    def _path2env_name(self, path: FieldPath, field: DataField) -> str:
+    def _path2env_name(self, path: FieldPath, field: DataField | PropertyField) -> str:
         if isinstance(field.__env__, str):
             return field.__env__
         elif self._auto:
@@ -188,7 +188,7 @@ class EnvironmentSource(Source):
     def load(self, config_cls: type[Config]) -> Config:
         with unfrozen(config_cls()) as config:
             for path, field in recurse_fields(config):
-                if isinstance(field, DataField):
+                if isinstance(field, DataField) or isinstance(field, PropertyField):
                     config[path] = self._environment.get(
                         self._path2env_name(path, field), MISSING)
         return config
