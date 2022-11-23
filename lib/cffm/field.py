@@ -225,6 +225,7 @@ class PropertyField(Field):
     __getter__: "Callable[[Config], Any] | None" = None
     __setter__: "Callable[[Config, Any], None] | None" = None
     __deleter__: "Callable[[Config], None] | None" = None
+    __env__: str | None = None
 
     def __create_default__(self, instance: "Config") -> Any:
         return self.__getter__(instance)
@@ -276,5 +277,8 @@ class PropertyField(Field):
         return self.__deleter__(instance)
 
 
-def property_field(getter: "Callable[[Config], Any]") -> PropertyField:
-    return PropertyField()(getter)
+def property_field(getter: "Callable[[Config], Any] | None" = None, /, *,
+                   env: str | None = None) -> PropertyField:
+    if getter is None:
+        return PropertyField(__env__=env)
+    return PropertyField(__env__=env)(getter)
