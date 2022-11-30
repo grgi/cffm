@@ -1,8 +1,8 @@
 from contextlib import contextmanager
 import types
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Iterable
 from dataclasses import dataclass
-from importlib.metadata import entry_points
+from importlib.metadata import entry_points, EntryPoint
 import inspect
 from typing import overload, Any, ClassVar
 
@@ -288,8 +288,21 @@ def section(name: str, *,
     return deco
 
 
+@overload
 def sections_from_entrypoints(name: str) -> dict[str, type[Section]]:
-    cfg_mapping = {tuple(ep.name.split('.')): ep.load() for ep in entry_points(group=name)}
+    ...
+
+
+@overload
+def sections_from_entrypoints(config_entry_points: Iterable[EntryPoint]) \
+        -> dict[str, type[Section]]:
+    ...
+
+
+def sections_from_entrypoints(name_or_entrypoints) -> dict[str, type[Section]]:
+    if isinstance(name_or_entrypoints, str):
+        name_or_entrypoints = entry_points(group=name_or_entrypoints)
+    cfg_mapping = {tuple(ep.name.split('.')): ep.load() for ep in name_or_entrypoints}
     for path, cfg_def in sorted(cfg_mapping.items(),
                                 key=lambda item: len(item[0]), reverse=True):
         depth = len(path)
