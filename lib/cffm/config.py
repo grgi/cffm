@@ -299,10 +299,25 @@ def sections_from_entrypoints(config_entry_points: Iterable[EntryPoint]) \
     ...
 
 
+@overload
+def sections_from_entrypoints(configs: Iterable[tuple[str, type[Config]]]) \
+        -> dict[str, type[Section]]:
+    ...
+
+
 def sections_from_entrypoints(name_or_entrypoints) -> dict[str, type[Section]]:
     if isinstance(name_or_entrypoints, str):
         name_or_entrypoints = entry_points(group=name_or_entrypoints)
-    cfg_mapping = {tuple(ep.name.split('.')): ep.load() for ep in name_or_entrypoints}
+
+    def gen():
+        for item in name_or_entrypoints:
+            match item:
+                case EntryPoint() as ep:
+                    yield ep.name, ep.load()
+                case (name, cfg_cls):
+                    yield name, cfg_cls
+
+    cfg_mapping = {tuple(name.split('.')): cfg_cls for name, cfg_cls in gen()}
     for path, cfg_def in sorted(cfg_mapping.items(),
                                 key=lambda item: len(item[0]), reverse=True):
         depth = len(path)
