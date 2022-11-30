@@ -8,7 +8,7 @@ from typing import overload, Any, ClassVar
 
 
 from cffm import MISSING
-from cffm.field import _MissingObject, Field, DataField, SectionField, FieldPath, PropertyField
+from cffm.field import Field, DataField, SectionField, FieldPath, PropertyField
 
 _marker = object()
 
@@ -79,57 +79,61 @@ class Config:
         self.__options__.frozen = not inverse
 
     def __class_getitem__(cls, field_path: FieldPath) -> Field:
-        match field_path:
-            case FieldPath([name]):
-                return cls.__fields__[name]
-            case FieldPath((name, *sub)):
+        if isinstance(field_path, FieldPath):
+            name, *sub = field_path
+            if sub:
                 return cls.__sections__[name][FieldPath(sub)]
-            case str() as path:
-                return cls[FieldPath(path)]
+            else:
+                return cls.__fields__[name]
+        elif isinstance(field_path, str):
+            return cls[FieldPath(field_path)]
 
         raise KeyError(field_path)
 
     def __getitem__(self, field_or_path: Field | FieldPath) -> Any:
-        match field_or_path:
-            case Field() as field:
-                inst = self.__field_instance_mapping__[field]
-                return getattr(inst, field.__field_name__)
-            case FieldPath([name]):
-                return getattr(self, name)
-            case FieldPath((name, *sub)):
+        if isinstance(field_or_path, Field):
+            inst = self.__field_instance_mapping__[field_or_path]
+            return getattr(inst, field_or_path.__field_name__)
+        elif isinstance(field_or_path, FieldPath):
+            name, *sub = field_or_path
+            if sub:
                 return self[name][FieldPath(sub)]
-            case str() as path:
-                return self[FieldPath(path)]
-
-        raise KeyError(field_or_path)
+            else:
+                return getattr(self, name)
+        elif isinstance(field_or_path, str):
+            return self[FieldPath(field_or_path)]
+        else:
+            raise KeyError(field_or_path)
 
     def __setitem__(self, field_or_path: Field | FieldPath, value: Any):
-        match field_or_path:
-            case Field() as field:
-                inst = self.__field_instance_mapping__[field]
-                setattr(inst, field.__field_name__, value)
-            case FieldPath([name]):
-                setattr(self, name, value)
-            case FieldPath((name, *sub)):
+        if isinstance(field_or_path, Field):
+            inst = self.__field_instance_mapping__[field_or_path]
+            setattr(inst, field_or_path.__field_name__, value)
+        elif isinstance(field_or_path, FieldPath):
+            name, *sub = field_or_path
+            if sub:
                 getattr(self, name)[FieldPath(sub)] = value
-            case str() as path:
-                self[FieldPath(path)] = value
-            case _:
-                raise KeyError(field_or_path)
+            else:
+                setattr(self, name, value)
+        elif isinstance(field_or_path, str):
+            self[FieldPath(field_or_path)] = value
+        else:
+            raise KeyError(field_or_path)
 
     def __delitem__(self, field_or_path: Field | FieldPath):
-        match field_or_path:
-            case Field() as field:
-                inst = self.__field_instance_mapping__[field]
-                setattr(inst, field.__field_name__, MISSING)
-            case FieldPath([name]):
+        if isinstance(field_or_path, Field):
+            inst = self.__field_instance_mapping__[field_or_path]
+            setattr(inst, field_or_path.__field_name__, MISSING)
+        elif isinstance(field_or_path, FieldPath):
+            name, *sub = field_or_path
+            if sub:
+                del getattr(self, name)[FieldPath(sub)]
+            else:
                 delattr(self, name)
-            case FieldPath((name, *sub)):
-                del getattr(self[name])[FieldPath(sub)]
-            case str() as path:
-                del self[FieldPath(path)]
-            case _:
-                raise KeyError(field_or_path)
+        elif isinstance(field_or_path, str):
+            del self[FieldPath(field_or_path)]
+        else:
+            raise KeyError(field_or_path)
 
 
 class Section(Config):
@@ -192,40 +196,37 @@ def _process_def(config_def: type, *additional_sections: type[Section]) \
     fields = getattr(config_def, '__fields__', {}).copy()
     sections = getattr(config_def, '__sections__', {}).copy()
 
-    def gen_fields() -> Iterator[tuple[str, Field]]:
-        for name, field_type in annotations.items():
-            if name in fields:
-                continue
-            match cls_vars.pop(name, MISSING):
-                case _MissingObject():
-                    yield name, DataField(__field_name__=name, __type__=field_type)
-                case Field() as f:
-                    yield name, f.__update__(__field_name__=name, __type__=field_type)
-                case _ as v:
-                    yield name, DataField(__default__=v, __field_name__=name,
-                                          __type__=field_type)
+    for name, field_type in annotations.items():
+        if name in fields:
+            continue
+        if (cls_attr := cls_vars.pop(name, MISSING)) is MISSING:
+            fields[name] = DataField(__field_name__=name, __type__=field_type)
+        elif isinstance(cls_attr, Field):
+            fields[name] = cls_attr.__update__(__field_name__=name, __type__=field_type)
+        else:
+            fields[name] = DataField(__default__=cls_attr,
+                                     __field_name__=name,
+                                     __type__=field_type)
 
-        for name, attr in cls_vars.items():
-            if isinstance(attr, PropertyField):
-                yield name, attr
-            elif name not in sections and isinstance(attr, type) \
-                    and issubclass(attr, Section):
-                name = attr.__section_name__
-                sections[name] = attr
-                annotations[name] = attr
-                yield name, SectionField(attr)
-            else:
-                ns[name] = attr
+    for name, attr in cls_vars.items():
+        if isinstance(attr, PropertyField):
+            fields[name] = attr
+        elif name not in sections and isinstance(attr, type) \
+                and issubclass(attr, Section):
+            name = attr.__section_name__
+            sections[name] = attr
+            annotations[name] = attr
+            fields[name] = SectionField(attr)
+        else:
+            ns[name] = attr
 
-        for section_cls in additional_sections:
-            name = section_cls.__section_name__
-            if name in sections:
-                raise TypeError(f"Duplicate section: {name}")
-            sections[name] = section_cls
-            annotations[name] = section_cls
-            yield name, SectionField(section_cls)
-
-    fields |= dict(gen_fields())
+    for section_cls in additional_sections:
+        name = section_cls.__section_name__
+        if name in sections:
+            raise TypeError(f"Duplicate section: {name}")
+        sections[name] = section_cls
+        annotations[name] = section_cls
+        fields[name] = SectionField(section_cls)
 
     ns.update(
         __annotations__=annotations,
@@ -311,11 +312,10 @@ def sections_from_entrypoints(name_or_entrypoints) -> dict[str, type[Section]]:
 
     def gen():
         for item in name_or_entrypoints:
-            match item:
-                case EntryPoint() as ep:
-                    yield ep.name, ep.load()
-                case (name, cfg_cls):
-                    yield name, cfg_cls
+            if isinstance(ep := item, EntryPoint):
+                yield ep.name, ep.load()
+            else:
+                yield item
 
     cfg_mapping = {tuple(name.split('.')): cfg_cls for name, cfg_cls in gen()}
     for path, cfg_def in sorted(cfg_mapping.items(),
@@ -331,11 +331,10 @@ def asdict(cfg: Config) -> dict[str, Any]:
     def gen():
         for name, field in cfg.__fields__.items():
             value = getattr(cfg, name, MISSING)
-            match field:
-                case DataField():
-                    if value is not MISSING:
-                        yield name, value
-                case SectionField():
-                    yield name, asdict(value)
+            if isinstance(field, DataField):
+                if value is not MISSING:
+                    yield name, value
+            elif isinstance(field, SectionField):
+                yield name, asdict(value)
 
     return dict(gen())

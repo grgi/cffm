@@ -27,13 +27,12 @@ class FieldPath(str):
     components: tuple[str]
 
     def __new__(cls, str_or_tuple: str | Iterable[str] = ()):
-        match str_or_tuple:
-            case str() as value:
-                components = value.split('.') if value else ()
-            case Iterable() as components:
-                value = '.'.join(components)
-            case _:
-                raise ValueError(f"Value is not a FieldPath: {str_or_tuple}")
+        if isinstance(value := str_or_tuple, str):
+            components = value.split('.') if value else ()
+        elif isinstance(components := str_or_tuple, Iterable):
+            value = '.'.join(components)
+        else:
+            raise ValueError(f"Value is not a FieldPath: {str_or_tuple}")
 
         path = super().__new__(cls, value)
         path.components = tuple(components)
@@ -132,23 +131,22 @@ class DataField(Field):
         if self.__converter__ is not None:
             return self.__converter__(self, value)
 
-        match self.__type__:
-            case type():
-                if issubclass(self.__type__, Enum):
-                    try:
-                        return self.__type__[value]
-                    except KeyError:
-                        return self.__type__(value)
-                elif self.__type__ is bool:
-                    if isinstance(value, str):
-                        return value.lower() in ('yes', 'y', 't', 'true', '1')
-                    return bool(value)
-                return self.__type__(value)
-            case types.UnionType():
-                for t in get_args(self.__type__):
-                    if isinstance(value, t):
-                        return value
-                return get_args(self.__type__)[0](value)
+        if isinstance(self.__type__, type):
+            if issubclass(self.__type__, Enum):
+                try:
+                    return self.__type__[value]
+                except KeyError:
+                    return self.__type__(value)
+            elif self.__type__ is bool:
+                if isinstance(value, str):
+                    return value.lower() in ('yes', 'y', 't', 'true', '1')
+                return bool(value)
+            return self.__type__(value)
+        elif isinstance(self.__type__, types.UnionType):
+            for t in get_args(self.__type__):
+                if isinstance(value, t):
+                    return value
+            return get_args(self.__type__)[0](value)
 
     @staticmethod
     def __serialize__(value: Any) -> Any:
