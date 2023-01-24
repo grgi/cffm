@@ -54,6 +54,40 @@ class FieldPath(str):
         return FieldPath(super().lower())
 
 
+class Ref:
+    __slots__ = ('_path', '_pos')
+
+    _pos: int
+    _path: str
+
+    def __init__(self, path: str, /):
+        if path.startswith('..'):
+            self._pos = -1
+            self._path = path[2:]
+        elif path.startswith('.'):
+            self._pos = 1
+            self._path = path[1:]
+        else:
+            self._pos = 0
+            self._path = path
+
+    @staticmethod
+    def _get_root(config: "Config") -> "Config":
+        parent = config
+        while True:
+            try:
+                parent = parent.__parent__
+            except AttributeError:
+                return parent
+
+    def __call__(self, _field: "DataField", config: "Config") -> Any:
+        if self._pos == 0:
+            config = self._get_root(config)
+        if self._pos == -1:
+            config = config.__parent__
+        return config[self._path]
+
+
 @dataclass(frozen=True, repr=False, slots=True)
 class Field(metaclass=ABCMeta):
     __field_name__: str | None = None
@@ -149,7 +183,7 @@ def default_converter(type_: type, value: Any) -> Any:
 @dataclass(frozen=True, repr=False, slots=True)
 class DataField(Field):
     __default__: Callable[[], Any] = lambda: MISSING
-    __ref__: "Callable[[Field, Config]], Any] | None" = None
+    __ref__: Ref | None = None
     __env__: str | None = None
     __converter__: "Callable[[Field, Any], Any] | None" = None
 
@@ -177,15 +211,21 @@ class DataField(Field):
 def field(default: Any | _MissingObject = MISSING,
           doc: str | None = None, *,
           default_factory: Callable[[], Any] | None = None,
+          ref: Ref | None = None,
           env: str | None = None,
           converter: "Callable[[Any, Field], Any]" = None) -> Field:
+    if sum((default is not MISSING,
+            default_factory is not None,
+            ref is not None)) > 1:
+        raise TypeError(
+            "Arguments 'default', 'default_factory', and 'ref' of a field definition are mutually exclusive"
+        )
     if default_factory is None:
         def default_factory():
             return default
-    elif default is not MISSING:
-        raise TypeError("A field definition may not specify both 'default' and 'default_factory'")
+
     return DataField(__default__=default_factory, __description__=doc,
-                     __env__=env, __converter__=converter)
+                     __env__=env, __converter__=converter, __ref__=ref)
 
 
 class SectionField(Field):

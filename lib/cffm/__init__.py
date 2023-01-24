@@ -10,7 +10,7 @@ finally:
     del version, PackageNotFoundError
 
 
-from cffm.field import MISSING, field, property_field
+from cffm.field import MISSING, field, property_field, Ref
 from cffm.config import config, section, sections_from_entrypoints
 from cffm.multi import MultiSourceConfig
 from cffm.source import *
