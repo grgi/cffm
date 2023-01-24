@@ -47,6 +47,8 @@ except ImportError:
         def convert(
                 self, value: Any, param: click.Parameter | None, ctx: click.Context | None
         ) -> Any:
+            if isinstance(value, self.enum_type):
+                value = value.name
             value = super().convert(value=value, param=param, ctx=ctx)
             if value is None:
                 return None
