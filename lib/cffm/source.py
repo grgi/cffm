@@ -55,7 +55,8 @@ class DefaultSource(Source):
     def load(self, config_cls: type[Config]) -> Config:
         with unfrozen(config_cls()) as config:
             for path, field in recurse_fields(config):
-                if isinstance(field, DataField) or isinstance(field, PropertyField):
+                if isinstance(field, DataField) or (
+                        isinstance(field, PropertyField) and not field.__readonly__):
                     config[path] = field.__create_default__(
                         config.__field_instance_mapping__[field])
         return config
@@ -188,7 +189,8 @@ class EnvironmentSource(Source):
     def load(self, config_cls: type[Config]) -> Config:
         with unfrozen(config_cls()) as config:
             for path, field in recurse_fields(config):
-                if isinstance(field, DataField) or isinstance(field, PropertyField):
+                if isinstance(field, DataField) or (
+                        isinstance(field, PropertyField) and not field.__readonly__):
                     config[path] = self._environment.get(
                         self._path2env_name(path, field), MISSING)
         return config
