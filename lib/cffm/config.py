@@ -204,7 +204,7 @@ def _process_def(config_def: type, *additional_sections: type[Section]) \
         elif isinstance(cls_attr, Field):
             fields[name] = cls_attr.__update__(__field_name__=name, __type__=field_type)
         else:
-            fields[name] = DataField(__default__=cls_attr,
+            fields[name] = DataField(__default__=lambda default=cls_attr: default,
                                      __field_name__=name,
                                      __type__=field_type)
 

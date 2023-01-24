@@ -4,7 +4,7 @@ from abc import ABCMeta, abstractmethod
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any, get_args, Callable, TYPE_CHECKING, overload
+from typing import Any, get_args, Callable, TYPE_CHECKING, overload, get_origin
 
 if TYPE_CHECKING:
     from cffm.config import Config, Section
@@ -66,7 +66,9 @@ class Field(metaclass=ABCMeta):
         object.__setattr__(self, '__config_cls__', owner)
 
     def __repr__(self) -> str:
-        field_type = getattr(self.__type__, '__name__', str(self.__type__))
+        field_type = str(self.__type__)
+        if not isinstance(self.__type__, types.GenericAlias):
+            field_type = getattr(self.__type__, '__name__', field_type)
         if self.__config_cls__ is None:
             return f"<Unbound Field: {field_type}>"
         return f"<Field {self.__config_cls__.__name__}.{self.__field_name__}: {field_type}>"
@@ -111,18 +113,51 @@ class Field(metaclass=ABCMeta):
         except KeyError:
             raise AttributeError(self.__field_name__) from None
 
+def default_converter(type_: type, value: Any) -> Any:
+    if isinstance(type_, types.UnionType):
+        # also Optional type
+        for t in get_args(type_):
+            if not isinstance(t, types.GenericAlias) and isinstance(value, t):
+                return default_converter(t, value)
+        return get_args(type_)[0](value)
+    elif isinstance(type_, types.GenericAlias):
+        origin = get_origin(type_)
+        if origin in (list, tuple, set, frozenset):
+            item_type, = get_args(type_)
+            return origin(default_converter(item_type, item) for item in value)
+        if origin is dict:
+            key_type, value_type = get_args(type_)
+            return {default_converter(key_type, k): default_converter(value_type, v)
+                    for k, v in value.items()}
+        else:
+            raise ValueError(f"Unsupported generic type: {type_}")
+    elif isinstance(type_, type):
+        if issubclass(type_, Enum):
+            try:
+                return type_[value]
+            except KeyError:
+                return type_(value)
+        elif type_ is bool:
+            if isinstance(value, str):
+                return value.lower() in ('yes', 'y', 't', 'true', '1')
+            return bool(value)
+        elif type_ is types.NoneType:
+            return None
+        return type_(value)
+
 
 @dataclass(frozen=True, repr=False, slots=True)
 class DataField(Field):
-    __default__: Any = MISSING
+    __default__: Callable[[], Any] = lambda: MISSING
     __ref__: "Callable[[Field, Config]], Any] | None" = None
     __env__: str | None = None
     __converter__: "Callable[[Field, Any], Any] | None" = None
 
     def __create_default__(self, instance: "Config") -> Any:
-        if self.__default__ is MISSING and self.__ref__ is not None:
+        default = self.__default__()
+        if default is MISSING and self.__ref__ is not None:
             return self.__ref__(self, instance)
-        return self.__default__
+        return default
 
     def __convert__(self, value: Any) -> Any:
         if value is MISSING:
@@ -131,22 +166,7 @@ class DataField(Field):
         if self.__converter__ is not None:
             return self.__converter__(self, value)
 
-        if isinstance(self.__type__, type):
-            if issubclass(self.__type__, Enum):
-                try:
-                    return self.__type__[value]
-                except KeyError:
-                    return self.__type__(value)
-            elif self.__type__ is bool:
-                if isinstance(value, str):
-                    return value.lower() in ('yes', 'y', 't', 'true', '1')
-                return bool(value)
-            return self.__type__(value)
-        elif isinstance(self.__type__, types.UnionType):
-            for t in get_args(self.__type__):
-                if isinstance(value, t):
-                    return value
-            return get_args(self.__type__)[0](value)
+        return default_converter(self.__type__, value)
 
     @staticmethod
     def __serialize__(value: Any) -> Any:
@@ -154,12 +174,17 @@ class DataField(Field):
             return value.name
         return value
 
-
 def field(default: Any | _MissingObject = MISSING,
-          description: str | None = None, *,
+          doc: str | None = None, *,
+          default_factory: Callable[[], Any] | None = None,
           env: str | None = None,
           converter: "Callable[[Any, Field], Any]" = None) -> Field:
-    return DataField(__default__=default, __description__=description,
+    if default_factory is None:
+        def default_factory():
+            return default
+    elif default is not MISSING:
+        raise TypeError("A field definition may not specify both 'default' and 'default_factory'")
+    return DataField(__default__=default_factory, __description__=doc,
                      __env__=env, __converter__=converter)
 
 

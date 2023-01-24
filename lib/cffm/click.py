@@ -67,8 +67,9 @@ class ConfigOption(click.Option):
                  help: str | None = None,
                  **kwargs):
 
-        if default is None and field.__default__ is not MISSING:
-            default = field.__default__
+        if default is None:
+            if (field_default := field.__default__()) is not MISSING:
+                default = field_default
 
         if type is None:
             type = field.__type__
