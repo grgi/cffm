@@ -187,11 +187,14 @@ class DataField(Field):
     __env__: str | None = None
     __converter__: "Callable[[Field, Any], Any] | None" = None
 
-    def __create_default__(self, instance: "Config") -> Any:
-        default = self.__default__()
-        if default is MISSING and self.__ref__ is not None:
+    def __get__(self, instance: "Config | None", owner: "type[Config]") -> Any:
+        value = Field.__get__(self, instance, owner)
+        if self.__ref__ is not None and value is MISSING:
             return self.__ref__(self, instance)
-        return default
+        return value
+
+    def __create_default__(self, instance: "Config") -> Any:
+        return self.__default__()
 
     def __convert__(self, value: Any) -> Any:
         if value is MISSING:
@@ -304,6 +307,10 @@ class PropertyField(Field):
             object.__setattr__(self, '__field_name__', getter.__name__)
         object.__setattr__(self, '__type__', inspect.get_annotations(getter).get('return'))
         return self
+
+    @property
+    def __readonly__(self) -> bool:
+        return self.__setter__ is None
 
     def setter(self, setter: "Callable[[Config, Any], None]") -> "PropertyField":
         object.__setattr__(self, '__setter__', setter)
